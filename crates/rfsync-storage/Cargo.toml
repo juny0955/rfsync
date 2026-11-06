@@ -1,0 +1,6 @@
+[package]
+name = "rfsync-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
