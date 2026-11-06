@@ -1,27 +1,63 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+#[derive(Debug)]
+pub struct ScanResult {
+    pub entries: Vec<Entry>,
+    pub skipped: Vec<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct Entry {
+    pub path: PathBuf,
+    pub kind: EntryKind,
+}
+
+#[derive(Debug)]
+pub enum EntryKind {
+    File { size: u64, modified: SystemTime },
+    Directory,
+}
 
 /// `root` 아래의 경로를 `root` 기준 상대 경로로 반환합니다. 심볼릭 링크는 따라가지 않습니다.
 ///
 /// # Errors
 /// 디렉터리를 읽거나 항목을 확인할 수 없으면 오류를 반환합니다.
-pub fn scan(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
+pub fn scan(root: &Path) -> io::Result<ScanResult> {
     let mut directories = vec![PathBuf::new()];
+    let mut entries = Vec::new();
+    let mut skipped = Vec::new();
 
     while let Some(directory) = directories.pop() {
         for entry in fs::read_dir(root.join(&directory))? {
             let entry = entry?;
             let path = directory.join(entry.file_name());
-            if entry.file_type()?.is_dir() {
+
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
                 directories.push(path.clone());
+                entries.push(Entry {
+                    path,
+                    kind: EntryKind::Directory,
+                });
+            } else if file_type.is_file() {
+                let metadata = entry.metadata()?;
+                entries.push(Entry {
+                    path,
+                    kind: EntryKind::File {
+                        size: metadata.len(),
+                        modified: metadata.modified()?,
+                    },
+                });
+            } else {
+                skipped.push(path);
             }
-            paths.push(path);
         }
     }
 
-    Ok(paths)
+    Ok(ScanResult { entries, skipped })
 }
 
 #[cfg(test)]
@@ -47,19 +83,37 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&root, root.join("nested/link"))?;
 
-        let mut paths = scan(&root)?;
-        paths.sort();
+        let modified = fs::metadata(root.join("nested/file.txt"))?.modified()?;
+        let result = scan(&root)?;
         fs::remove_dir_all(&root)?;
 
-        let mut expected = vec![
+        let mut paths: Vec<_> = result
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
+        paths.sort();
+        let expected = vec![
             PathBuf::from("nested"),
             PathBuf::from("nested/empty"),
             PathBuf::from("nested/file.txt"),
         ];
-        #[cfg(unix)]
-        expected.push(PathBuf::from("nested/link"));
-        expected.sort();
         assert_eq!(paths, expected);
+
+        for entry in &result.entries {
+            if entry.path == Path::new("nested/file.txt") {
+                assert!(
+                    matches!(entry.kind, EntryKind::File { size: 4, modified: time } if time == modified)
+                );
+            } else {
+                assert!(matches!(entry.kind, EntryKind::Directory));
+            }
+        }
+
+        #[cfg(unix)]
+        assert_eq!(result.skipped, vec![PathBuf::from("nested/link")]);
+        #[cfg(not(unix))]
+        assert!(result.skipped.is_empty());
         Ok(())
     }
 
