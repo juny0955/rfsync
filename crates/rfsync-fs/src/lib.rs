@@ -1,5 +1,6 @@
 use std::fs;
-use std::io;
+use std::fs::File;
+use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -17,7 +18,11 @@ pub struct Entry {
 
 #[derive(Debug)]
 pub enum EntryKind {
-    File { size: u64, modified: SystemTime },
+    File {
+        size: u64,
+        hash: String,
+        modified: SystemTime,
+    },
     Directory,
 }
 
@@ -43,10 +48,14 @@ pub fn scan(root: &Path) -> io::Result<ScanResult> {
                     kind: EntryKind::Directory,
                 });
             } else if file_type.is_file() {
-                let metadata = entry.metadata()?;
+                let file = File::open(entry.path())?;
+                let metadata = file.metadata()?;
+                let hash = hash_file(&file)?;
+
                 entries.push(Entry {
                     path,
                     kind: EntryKind::File {
+                        hash,
                         size: metadata.len(),
                         modified: metadata.modified()?,
                     },
@@ -58,6 +67,12 @@ pub fn scan(root: &Path) -> io::Result<ScanResult> {
     }
 
     Ok(ScanResult { entries, skipped })
+}
+
+fn hash_file(file: &File) -> io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(file)?;
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]
@@ -103,7 +118,7 @@ mod tests {
         for entry in &result.entries {
             if entry.path == Path::new("nested/file.txt") {
                 assert!(
-                    matches!(entry.kind, EntryKind::File { size: 4, modified: time } if time == modified)
+                    matches!(entry.kind, EntryKind::File { size: 4, modified: time, .. } if time == modified)
                 );
             } else {
                 assert!(matches!(entry.kind, EntryKind::Directory));
@@ -114,6 +129,45 @@ mod tests {
         assert_eq!(result.skipped, vec![PathBuf::from("nested/link")]);
         #[cfg(not(unix))]
         assert!(result.skipped.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn hashes_file_contents() -> io::Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "rfsync-hash-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root)?;
+        fs::write(root.join("empty"), b"")?;
+        fs::write(root.join("first"), b"same contents")?;
+        fs::write(root.join("second"), b"same contents")?;
+        fs::write(root.join("different"), b"different contents")?;
+
+        let result = scan(&root)?;
+        fs::remove_dir_all(&root)?;
+
+        let hash = |name| {
+            let entry = result
+                .entries
+                .iter()
+                .find(|entry| entry.path == Path::new(name))
+                .unwrap();
+            match &entry.kind {
+                EntryKind::File { hash, .. } => hash.as_str(),
+                EntryKind::Directory => panic!("expected a file"),
+            }
+        };
+        assert_eq!(
+            hash("empty"),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+        assert_eq!(hash("first"), hash("second"));
+        assert_ne!(hash("first"), hash("different"));
         Ok(())
     }
 
