@@ -1,8 +1,12 @@
-use std::{error::Error, io, path::Path};
+use std::path::Path;
 
 use rusqlite::{Connection, TransactionBehavior};
 
-pub fn open(path: &Path) -> Result<Connection, Box<dyn Error>> {
+use crate::error::StorageError;
+
+pub mod error;
+
+pub fn open(path: &Path) -> Result<Connection, StorageError> {
     let mut conn = Connection::open(path)?;
 
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -11,7 +15,7 @@ pub fn open(path: &Path) -> Result<Connection, Box<dyn Error>> {
     Ok(conn)
 }
 
-fn initialize_schema(conn: &mut Connection) -> Result<(), Box<dyn Error>> {
+fn initialize_schema(conn: &mut Connection) -> Result<(), StorageError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
     let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -28,7 +32,7 @@ fn initialize_schema(conn: &mut Connection) -> Result<(), Box<dyn Error>> {
             )?;
 
             if has_objects {
-                return Err(io::Error::other("스키마 버전이 없지만 비어있지 않은 DB입니다").into());
+                return Err(StorageError::UnversionedDatabase);
             }
 
             tx.execute_batch(include_str!("../sql/schema.sql"))?;
@@ -36,7 +40,7 @@ fn initialize_schema(conn: &mut Connection) -> Result<(), Box<dyn Error>> {
         }
         1 => {}
         _ => {
-            return Err(io::Error::other(format!("지원하지 않는 스키마 버전: {version}")).into());
+            return Err(StorageError::UnsupportedSchemaVersion(version));
         }
     }
 
@@ -47,6 +51,7 @@ fn initialize_schema(conn: &mut Connection) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -104,7 +109,10 @@ mod tests {
             "CREATE TABLE existing (value TEXT); INSERT INTO existing VALUES ('keep');",
         )?;
 
-        assert!(initialize_schema(&mut conn).is_err());
+        assert!(matches!(
+            initialize_schema(&mut conn),
+            Err(StorageError::UnversionedDatabase)
+        ));
         let value: String = conn.query_row("SELECT value FROM existing", [], |row| row.get(0))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         assert_eq!(value, "keep");
@@ -117,7 +125,10 @@ mod tests {
         let mut conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA user_version = 2;")?;
 
-        assert!(initialize_schema(&mut conn).is_err());
+        assert!(matches!(
+            initialize_schema(&mut conn),
+            Err(StorageError::UnsupportedSchemaVersion(2))
+        ));
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         assert_eq!(version, 2);
         Ok(())
