@@ -1,7 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/rfsync-fs", "crates/rfsync-storage",
+    "apps/cli",
+    "crates/rfsync-fs",
+    "crates/rfsync-storage",
 ]
 
 [workspace.package]
