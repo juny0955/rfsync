@@ -34,6 +34,29 @@ fn registers_canonical_root_path_and_returns_id() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+#[test]
+fn rejects_already_registered_canonical_path() -> Result<(), Box<dyn Error>> {
+    let test_dir = std::env::temp_dir().join(format!(
+        "rfsync-duplicate-root-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    fs::create_dir(&test_dir)?;
+    let root = test_dir.join("root");
+    let db_path = test_dir.join("test.db");
+    fs::create_dir(&root)?;
+    let expected = root.canonicalize()?;
+    rfsync_engine::register_root(&root, &db_path)?;
+
+    let result = rfsync_engine::register_root(&root.join("."), &db_path);
+
+    assert!(
+        matches!(result, Err(rfsync_engine::error::EngineError::RootAlreadyExists(path)) if path == expected)
+    );
+    fs::remove_dir_all(test_dir)?;
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn rejects_root_with_non_utf8_path() -> Result<(), Box<dyn Error>> {
