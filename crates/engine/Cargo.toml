@@ -5,4 +5,4 @@ edition.workspace = true
 
 [dependencies]
 rfsync-fs = { path = "../fs" }
-rfsync-storage = { path = "../rfsync-storage" }
+rfsync-storage = { path = "../storage" }

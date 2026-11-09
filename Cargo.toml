@@ -4,7 +4,7 @@ members = [
     "apps/cli",
     "crates/engine",
     "crates/fs",
-    "crates/rfsync-storage",
+    "crates/storage",
 ]
 
 [workspace.package]
