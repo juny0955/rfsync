@@ -24,9 +24,9 @@ fn saves_files_empty_folders_and_ignores_symlinks() -> Result<(), Box<dyn Error>
     fs::write(root.join("photos/photo.txt"), b"photo")?;
     #[cfg(unix)]
     std::os::unix::fs::symlink(&root, root.join("link"))?;
-    let root_id = rfsync_core::register_root(&root, &db_path)?;
+    let root_id = rfsync_engine::register_root(&root, &db_path)?;
 
-    rfsync_core::create_initial_snapshot(root_id, &db_path)?;
+    rfsync_engine::create_initial_snapshot(root_id, &db_path)?;
 
     let conn = rfsync_storage::open(&db_path)?;
     let root_info = rfsync_storage::get_root(&conn, root_id)?.ok_or("missing root")?;
@@ -76,11 +76,11 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
     let db_path = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("first"), b"first")?;
-    let root_id = rfsync_core::register_root(&root, &db_path)?;
-    rfsync_core::create_initial_snapshot(root_id, &db_path)?;
+    let root_id = rfsync_engine::register_root(&root, &db_path)?;
+    rfsync_engine::create_initial_snapshot(root_id, &db_path)?;
     fs::write(root.join("second"), b"second")?;
 
-    let error = rfsync_core::create_initial_snapshot(root_id, &db_path)
+    let error = rfsync_engine::create_initial_snapshot(root_id, &db_path)
         .expect_err("duplicate snapshot must fail");
 
     assert_eq!(
@@ -108,9 +108,9 @@ fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn E
     let db_path = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("invalid\\name"), b"test")?;
-    let root_id = rfsync_core::register_root(&root, &db_path)?;
+    let root_id = rfsync_engine::register_root(&root, &db_path)?;
 
-    let result = rfsync_core::create_initial_snapshot(root_id, &db_path);
+    let result = rfsync_engine::create_initial_snapshot(root_id, &db_path);
 
     assert!(result.is_err());
     let conn = rfsync_storage::open(&db_path)?;

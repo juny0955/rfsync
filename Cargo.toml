@@ -2,7 +2,7 @@
 resolver = "3"
 members = [
     "apps/cli",
-    "crates/rfsync-core",
+    "crates/engine",
     "crates/rfsync-fs",
     "crates/rfsync-storage",
 ]

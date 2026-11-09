@@ -1,5 +1,5 @@
 [package]
-name = "rfsync-core"
+name = "rfsync-engine"
 version.workspace = true
 edition.workspace = true
 
