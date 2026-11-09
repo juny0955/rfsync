@@ -9,6 +9,16 @@ pub struct Root {
     pub has_snapshot: bool,
 }
 
+pub fn exists_root_path(conn: &Connection, local_path: &str) -> Result<bool, StorageError> {
+    let exists = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM roots WHERE local_path = ?1)",
+        [local_path],
+        |row| row.get(0),
+    )?;
+
+    Ok(exists)
+}
+
 pub fn insert_root(conn: &Connection, local_path: &str) -> Result<i64, StorageError> {
     conn.execute("INSERT INTO roots (local_path) VALUES (?1)", [local_path])?;
 
@@ -51,6 +61,16 @@ mod tests {
     use crate::open;
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn finds_only_registered_root_path() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        insert_root(&conn, "/example")?;
+
+        assert!(exists_root_path(&conn, "/example")?);
+        assert!(!exists_root_path(&conn, "/other")?);
+        Ok(())
+    }
 
     #[test]
     fn marks_only_selected_root_as_having_snapshot() -> Result<(), Box<dyn Error>> {
