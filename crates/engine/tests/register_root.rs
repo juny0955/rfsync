@@ -17,7 +17,7 @@ fn registers_canonical_root_path_and_returns_id() -> Result<(), Box<dyn Error>> 
 
     let result = (|| -> Result<_, Box<dyn Error>> {
         let expected_path = root.canonicalize()?;
-        let root_id = rfsync_core::register_root(&root.join("."), &db_path)?;
+        let root_id = rfsync_engine::register_root(&root.join("."), &db_path)?;
         let conn = rfsync_storage::open(&db_path)?;
         let (saved_path, has_snapshot): (String, i64) = conn.query_row(
             "SELECT local_path, has_snapshot FROM roots WHERE id = ?1",

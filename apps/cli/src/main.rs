@@ -8,8 +8,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "잘못된 명령입니다"))?;
 
-    let root_id = rfsync_core::register_root(&root, &db_path)?;
-    rfsync_core::create_initial_snapshot(root_id, &db_path)?;
+    let root_id = rfsync_engine::register_root(&root, &db_path)?;
+    rfsync_engine::create_initial_snapshot(root_id, &db_path)?;
 
     Ok(())
 }

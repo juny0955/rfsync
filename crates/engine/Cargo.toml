@@ -1,0 +1,8 @@
+[package]
+name = "rfsync-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rfsync-fs = { path = "../fs" }
+rfsync-storage = { path = "../storage" }
