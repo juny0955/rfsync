@@ -5,9 +5,11 @@ use rusqlite::{Connection, TransactionBehavior};
 use crate::error::StorageError;
 
 pub mod error;
+mod file;
 mod folder;
 mod root;
 
+pub use file::*;
 pub use folder::*;
 pub use root::*;
 
