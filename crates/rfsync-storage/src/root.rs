@@ -35,12 +35,70 @@ pub fn get_root(conn: &Connection, root_id: i64) -> Result<Option<Root>, Storage
     Ok(root)
 }
 
+pub fn mark_root_has_snapshot(conn: &Connection, root_id: i64) -> Result<(), StorageError> {
+    let updated = conn.execute("UPDATE roots SET has_snapshot = 1 WHERE id = ?1", [root_id])?;
+
+    if updated == 0 {
+        return Err(StorageError::RootNotFound(root_id));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::open;
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn marks_only_selected_root_as_having_snapshot() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let other_id = insert_root(&conn, "/other")?;
+
+        mark_root_has_snapshot(&conn, root_id)?;
+
+        assert!(
+            get_root(&conn, root_id)?
+                .ok_or("root not found")?
+                .has_snapshot
+        );
+        assert!(
+            !get_root(&conn, other_id)?
+                .ok_or("root not found")?
+                .has_snapshot
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_marking_missing_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+
+        let result = mark_root_has_snapshot(&conn, 42);
+
+        assert!(matches!(result, Err(StorageError::RootNotFound(42))));
+        Ok(())
+    }
+
+    #[test]
+    fn rolls_back_snapshot_marker_with_transaction() -> Result<(), Box<dyn Error>> {
+        let mut conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+
+        let tx = conn.transaction()?;
+        mark_root_has_snapshot(&tx, root_id)?;
+        tx.rollback()?;
+
+        assert!(
+            !get_root(&conn, root_id)?
+                .ok_or("root not found")?
+                .has_snapshot
+        );
+        Ok(())
+    }
 
     #[test]
     fn inserts_multiple_roots_with_distinct_ids_and_no_snapshots() -> Result<(), Box<dyn Error>> {
