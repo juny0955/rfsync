@@ -8,5 +8,4 @@ name = "rfsync"
 path = "src/main.rs"
 
 [dependencies]
-rfsync-fs = { path = "../../crates/rfsync-fs" }
-rfsync-storage = { path = "../../crates/rfsync-storage" }
+rfsync-core = { path = "../../crates/rfsync-core" }
