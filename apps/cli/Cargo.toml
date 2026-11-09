@@ -1,0 +1,11 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rfsync"
+path = "src/main.rs"
+
+[dependencies]
+rfsync-core = { path = "../../crates/rfsync-core" }

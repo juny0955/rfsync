@@ -10,4 +10,7 @@ pub enum StorageError {
 
     #[error("지원하지 않는 스키마 버전: {0}")]
     UnsupportedSchemaVersion(i64),
+
+    #[error("Root를 찾을 수 없습니다: {0}")]
+    RootNotFound(i64),
 }
