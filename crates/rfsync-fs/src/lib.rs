@@ -16,6 +16,12 @@ pub struct Entry {
     pub kind: EntryKind,
 }
 
+impl Entry {
+    pub fn is_dir(&self) -> bool {
+        matches!(self.kind, EntryKind::Directory)
+    }
+}
+
 #[derive(Debug)]
 pub enum EntryKind {
     File {
