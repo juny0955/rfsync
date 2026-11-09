@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 rfsync-fs = { path = "../fs" }
 rfsync-storage = { path = "../storage" }
+thiserror.workspace = true

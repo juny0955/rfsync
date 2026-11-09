@@ -33,3 +33,28 @@ fn registers_canonical_root_path_and_returns_id() -> Result<(), Box<dyn Error>> 
     assert_eq!(has_snapshot, 0);
     Ok(())
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rejects_root_with_non_utf8_path() -> Result<(), Box<dyn Error>> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let test_dir = std::env::temp_dir().join(format!(
+        "rfsync-invalid-root-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    fs::create_dir(&test_dir)?;
+    let root = test_dir.join(OsString::from_vec(vec![0xff]));
+    fs::create_dir(&root)?;
+    let expected = root.canonicalize()?;
+
+    let result = rfsync_engine::register_root(&root, &test_dir.join("test.db"));
+
+    assert!(
+        matches!(result, Err(rfsync_engine::error::EngineError::InvalidRootPath(path)) if path == expected)
+    );
+    fs::remove_dir_all(test_dir)?;
+    Ok(())
+}

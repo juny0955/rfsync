@@ -1,3 +1,4 @@
+use rfsync_engine::error::EngineError;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -83,12 +84,7 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
     let error = rfsync_engine::create_initial_snapshot(root_id, &db_path)
         .expect_err("duplicate snapshot must fail");
 
-    assert_eq!(
-        error
-            .downcast_ref::<std::io::Error>()
-            .map(std::io::Error::kind),
-        Some(std::io::ErrorKind::AlreadyExists)
-    );
+    assert!(matches!(error, EngineError::SnapshotAlreadyExists(id) if id == root_id));
     let conn = rfsync_storage::open(&db_path)?;
     let names: Vec<String> = conn
         .prepare("SELECT name FROM files")?
@@ -96,6 +92,15 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
         .collect::<Result<_, _>>()?;
     assert_eq!(names, ["first"]);
     drop(conn);
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn rejects_snapshot_for_missing_root() -> Result<(), Box<dyn Error>> {
+    let dir = test_dir()?;
+    let result = rfsync_engine::create_initial_snapshot(42, &dir.join("snapshot.db"));
+    assert!(matches!(result, Err(EngineError::RootNotFound(42))));
     fs::remove_dir_all(dir)?;
     Ok(())
 }
@@ -112,7 +117,9 @@ fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn E
 
     let result = rfsync_engine::create_initial_snapshot(root_id, &db_path);
 
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(EngineError::InvalidEntryPath(path)) if path == std::path::Path::new("invalid\\name"))
+    );
     let conn = rfsync_storage::open(&db_path)?;
     assert!(
         !rfsync_storage::get_root(&conn, root_id)?

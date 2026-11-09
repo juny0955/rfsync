@@ -1,37 +1,35 @@
 use std::{
     collections::HashMap,
-    error::Error,
-    io,
     path::{Component, Path, PathBuf},
 };
 
 use rfsync_fs::EntryKind;
+use rfsync_storage::error::StorageError;
 
-pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, Box<dyn Error>> {
+use crate::error::EngineError;
+
+pub mod error;
+
+pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
     let conn = rfsync_storage::open(db_path)?;
 
     let absolute_root = root.canonicalize()?;
-    let local_path = absolute_root.to_str().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "root를 문자열로 표현할 수 없습니다",
-        )
-    })?;
+    let local_path = absolute_root
+        .to_str()
+        .ok_or_else(|| EngineError::InvalidRootPath(absolute_root.clone()))?;
 
     let root_id = rfsync_storage::insert_root(&conn, local_path)?;
     Ok(root_id)
 }
 
-pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Box<dyn Error>> {
+pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     let mut conn = rfsync_storage::open(db_path)?;
 
-    let root = rfsync_storage::get_root(&conn, root_id)?
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "등록되지 않은 root 입니다"))?;
+    let root =
+        rfsync_storage::get_root(&conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
 
     if root.has_snapshot {
-        return Err(
-            io::Error::new(io::ErrorKind::AlreadyExists, "이미 스냅샵이 존재합니다").into(),
-        );
+        return Err(EngineError::SnapshotAlreadyExists(root_id));
     }
 
     let result = rfsync_fs::scan(Path::new(&root.local_path))?;
@@ -39,7 +37,7 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Box<d
     let mut folder_ids = HashMap::<PathBuf, i64>::new();
 
     // === START TRANSACTION ===
-    let tx = conn.transaction()?;
+    let tx = conn.transaction().map_err(StorageError::from)?;
     let root_folder_id = rfsync_storage::insert_folder(&tx, root_id, "")?;
     folder_ids.insert(PathBuf::new(), root_folder_id);
 
@@ -58,18 +56,17 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Box<d
             modified,
         } = &entry.kind
         {
-            let parent = entry.path.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "부모 폴더가 없습니다")
-            })?;
+            let parent = entry
+                .path
+                .parent()
+                .ok_or_else(|| EngineError::InvalidEntryPath(entry.path.clone()))?;
 
-            let folder_id = *folder_ids.get(parent).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "부모 폴더 ID가 없습니다")
-            })?;
+            let folder_id = *folder_ids
+                .get(parent)
+                .ok_or_else(|| EngineError::ParentFolderNotFound(parent.to_path_buf()))?;
 
             let relative_path = portable_path(&entry.path)?;
-            let name = relative_path.rsplit('/').next().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "파일 이름이 없습니다")
-            })?;
+            let name = relative_path.rsplit('/').next().unwrap_or(&relative_path);
 
             let modified = modified.duration_since(std::time::UNIX_EPOCH)?;
             let file = rfsync_storage::File {
@@ -86,46 +83,48 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Box<d
         }
     }
     rfsync_storage::mark_root_has_snapshot(&tx, root_id)?;
-    tx.commit()?;
+    tx.commit().map_err(StorageError::from)?;
     // === END TRANSACTION ===
 
     Ok(())
 }
 
-fn portable_path(path: &Path) -> io::Result<String> {
+fn portable_path(path: &Path) -> Result<String, EngineError> {
     let mut parts = Vec::new();
 
     for compoenct in path.components() {
         let Component::Normal(name) = compoenct else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "상대 경로의 일반 이름만 허용됩니다",
-            ));
+            return Err(EngineError::InvalidEntryPath(path.to_path_buf()));
         };
 
-        let name = name.to_str().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "경로를 UTF-8로 표현할 수 없습니다",
-            )
-        })?;
+        let name = name
+            .to_str()
+            .ok_or_else(|| EngineError::InvalidEntryPath(path.to_path_buf()))?;
 
         if name.contains('\\') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "경로애 지원하지 않는 문자가 있습니다",
-            ));
+            return Err(EngineError::InvalidEntryPath(path.to_path_buf()));
         }
 
         parts.push(name);
     }
 
     if parts.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "빈 항목 경로는 허용하지 않습니다",
-        ));
+        return Err(EngineError::InvalidEntryPath(path.to_path_buf()));
     }
 
     Ok(parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_entry_paths() {
+        for path in ["", "..", "invalid\\name"] {
+            assert!(
+                matches!(portable_path(Path::new(path)), Err(EngineError::InvalidEntryPath(p)) if p == Path::new(path))
+            );
+        }
+    }
 }
