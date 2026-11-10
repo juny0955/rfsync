@@ -9,16 +9,16 @@ use rfsync_storage::{File, Folder};
 use crate::error::EngineError;
 
 #[derive(Debug)]
-pub struct SnapshotDiff {
+pub struct SnapshotDiff<'a> {
     pub added_folders: Vec<PathBuf>,
     pub removed_folders: HashMap<i64, PathBuf>,
 
-    pub added_files: Vec<PathBuf>,
-    pub modified_files: HashMap<i64, PathBuf>,
+    pub added_files: Vec<&'a FsEntry>,
+    pub modified_files: HashMap<i64, &'a FsEntry>,
     pub removed_files: HashMap<i64, PathBuf>, // removed_folder 하위 파일은 포함하지 않는다
 }
 
-impl SnapshotDiff {
+impl<'a> SnapshotDiff<'a> {
     pub fn new() -> Self {
         Self {
             added_folders: Vec::new(),
@@ -30,25 +30,21 @@ impl SnapshotDiff {
     }
 }
 
-impl Default for SnapshotDiff {
+impl Default for SnapshotDiff<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub fn diff_snapshot(root_id: i64, db_path: &Path) -> Result<SnapshotDiff, EngineError> {
-    let conn = rfsync_storage::open(db_path)?;
-    let root =
-        rfsync_storage::get_root(&conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
-    let root_path = Path::new(&root.local_path);
-    let result = rfsync_fs::scan(root_path)?;
-
-    let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
-    let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;
-
+pub fn calc_diff<'a>(
+    scans: &'a [FsEntry],
+    folders: &[Folder],
+    files: &[File],
+) -> Result<SnapshotDiff<'a>, EngineError> {
     let mut diff = SnapshotDiff::default();
-    diff_folder(&mut diff, &result, &folders);
-    diff_file(&mut diff, &result, &files, &folders)?;
+
+    diff_folder(&mut diff, scans, folders);
+    diff_file(&mut diff, scans, files, folders)?;
 
     Ok(diff)
 }
@@ -72,9 +68,9 @@ fn diff_folder(diff: &mut SnapshotDiff, scans: &[FsEntry], stored: &[Folder]) {
         .extend(remaining.into_iter().map(|(path, id)| (id, path)));
 }
 
-fn diff_file(
-    diff: &mut SnapshotDiff,
-    scans: &[FsEntry],
+fn diff_file<'a>(
+    diff: &mut SnapshotDiff<'a>,
+    scans: &'a [FsEntry],
     stored: &[File],
     folders: &[Folder],
 ) -> Result<(), EngineError> {
@@ -100,7 +96,7 @@ fn diff_file(
     for entry in scans.iter().filter(|e| !e.is_dir()) {
         match remaining.remove(&entry.path) {
             None => {
-                diff.added_files.push(entry.path.clone());
+                diff.added_files.push(entry);
             }
             Some(file) => {
                 if let FsEntryKind::File {
@@ -118,7 +114,7 @@ fn diff_file(
                         || secs != file.modified_secs
                         || timestamp.subsec_nanos() != file.modified_nanos
                     {
-                        diff.modified_files.insert(file.id, entry.path.clone());
+                        diff.modified_files.insert(file.id, entry);
                     }
                 }
             }
