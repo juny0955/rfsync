@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use rfsync_fs::EntryKind;
+use rfsync_fs::FsEntryKind;
 use rfsync_storage::error::StorageError;
 
 use crate::error::EngineError;
@@ -18,7 +18,7 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Engin
         return Err(EngineError::SnapshotAlreadyExists(root_id));
     }
 
-    let result = rfsync_fs::scan(Path::new(&root.local_path))?;
+    let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
     let mut folder_ids = HashMap::<PathBuf, i64>::new();
 
@@ -27,7 +27,7 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Engin
     let root_folder_id = rfsync_storage::insert_folder(&tx, root_id, "")?;
     folder_ids.insert(PathBuf::new(), root_folder_id);
 
-    for entry in &result.entries {
+    for entry in &entries {
         if entry.is_dir() {
             let relative_path = portable_path(&entry.path)?;
             let folder_id = rfsync_storage::insert_folder(&tx, root_id, &relative_path)?;
@@ -35,8 +35,8 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Engin
         }
     }
 
-    for entry in &result.entries {
-        if let EntryKind::File {
+    for entry in &entries {
+        if let FsEntryKind::File {
             size,
             hash,
             modified,
@@ -68,7 +68,10 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Engin
             rfsync_storage::insert_file(&tx, &file)?;
         }
     }
-    rfsync_storage::mark_root_has_snapshot(&tx, root_id)?;
+    if !rfsync_storage::mark_root_has_snapshot(&tx, root_id)? {
+        return Err(EngineError::RootNotFound(root_id));
+    }
+
     tx.commit().map_err(StorageError::from)?;
     // === END TRANSACTION ===
 
