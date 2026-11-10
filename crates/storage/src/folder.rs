@@ -40,12 +40,92 @@ pub fn get_folders_by_root_id(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn delete_folder_by_id(conn: &Connection, folder_id: i64) -> Result<bool, StorageError> {
+    let deleted = conn.execute("DELETE FROM folders WHERE id = ?1", [folder_id])?;
+
+    if deleted == 0 {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{insert_root, open};
+    use crate::{File, get_files_by_root_id, insert_file, insert_root, open};
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn deletes_folder_and_its_files_but_keeps_other_folders() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "photos")?;
+        let nested_id = insert_folder(&conn, root_id, "photos/trip")?;
+        for id in [folder_id, nested_id] {
+            insert_file(
+                &conn,
+                &File {
+                    id: 0,
+                    folder_id: id,
+                    name: "photo".into(),
+                    size: 1,
+                    hash: "a".repeat(64),
+                    modified_secs: 0,
+                    modified_nanos: 0,
+                },
+            )?;
+        }
+
+        assert!(delete_folder_by_id(&conn, folder_id)?);
+
+        let folders = get_folders_by_root_id(&conn, root_id)?;
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].id, nested_id);
+        let files = get_files_by_root_id(&conn, root_id)?;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].folder_id, nested_id);
+        Ok(())
+    }
+
+    #[test]
+    fn returns_false_when_folder_does_not_exist() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+
+        assert!(!delete_folder_by_id(&conn, 42)?);
+        Ok(())
+    }
+
+    #[test]
+    fn rolls_back_folder_deletion() -> Result<(), Box<dyn Error>> {
+        let mut conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "photos")?;
+        insert_file(
+            &conn,
+            &File {
+                id: 0,
+                folder_id,
+                name: "photo".into(),
+                size: 1,
+                hash: "a".repeat(64),
+                modified_secs: 0,
+                modified_nanos: 0,
+            },
+        )?;
+
+        let tx = conn.transaction()?;
+        assert!(delete_folder_by_id(&tx, folder_id)?);
+        tx.rollback()?;
+
+        assert_eq!(get_folders_by_root_id(&conn, root_id)?[0].id, folder_id);
+        assert_eq!(
+            get_files_by_root_id(&conn, root_id)?[0].folder_id,
+            folder_id
+        );
+        Ok(())
+    }
 
     #[test]
     fn gets_only_folders_for_the_selected_root() -> Result<(), Box<dyn Error>> {

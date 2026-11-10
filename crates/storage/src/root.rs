@@ -27,21 +27,22 @@ pub fn insert_root(conn: &Connection, local_path: &str) -> Result<i64, StorageEr
 
 pub fn get_root(conn: &Connection, root_id: i64) -> Result<Option<Root>, StorageError> {
     let root = conn
-        .query_row("
+        .query_row(
+            "
             SELECT id, local_path, has_snapshot
             FROM roots
             WHERE id = ?1
         ",
-        [root_id],
-        |row| {
-            Ok(Root {
-                id: row.get(0)?,
-                local_path: row.get(1)?,
-                has_snapshot: row.get(2)?,
-            })
-        },
-    )
-    .optional()?;
+            [root_id],
+            |row| {
+                Ok(Root {
+                    id: row.get(0)?,
+                    local_path: row.get(1)?,
+                    has_snapshot: row.get(2)?,
+                })
+            },
+        )
+        .optional()?;
 
     Ok(root)
 }
