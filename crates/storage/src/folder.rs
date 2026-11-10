@@ -43,11 +43,7 @@ pub fn get_folders_by_root_id(
 pub fn delete_folder_by_id(conn: &Connection, folder_id: i64) -> Result<bool, StorageError> {
     let deleted = conn.execute("DELETE FROM folders WHERE id = ?1", [folder_id])?;
 
-    if deleted == 0 {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(deleted > 0)
 }
 
 #[cfg(test)]
