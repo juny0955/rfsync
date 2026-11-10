@@ -14,8 +14,15 @@ pub struct File {
 
 pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> {
     conn.execute(
-        "INSERT INTO files
-        (folder_id, name, fsize, hash, modified_secs, modified_nanos)
+        "
+        INSERT INTO files (
+            folder_id,
+            name,
+            fsize,
+            hash,
+            modified_secs,
+            modified_nanos
+        )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             file.folder_id,
@@ -28,6 +35,38 @@ pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> 
     )?;
 
     Ok(conn.last_insert_rowid())
+}
+
+pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>, StorageError> {
+    let mut stmt = conn.prepare(
+        "
+            SELECT
+                files.id,
+                files.folder_id,
+                files.name,
+                files.fsize,
+                files.hash,
+                files.modified_secs,
+                files.modified_nanos
+            FROM files
+            JOIN folders ON files.folder_id = folders.id
+            WHERE folders.root_id = ?1
+        ",
+    )?;
+
+    let rows = stmt.query_map([root_id], |row| {
+        Ok(File {
+            id: row.get(0)?,
+            folder_id: row.get(1)?,
+            name: row.get(2)?,
+            size: row.get(3)?,
+            hash: row.get(4)?,
+            modified_secs: row.get(5)?,
+            modified_nanos: row.get(6)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 #[cfg(test)]
@@ -47,6 +86,45 @@ mod tests {
             modified_secs: 123,
             modified_nanos: 456,
         }
+    }
+
+    #[test]
+    fn gets_files_only_for_selected_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let other_root_id = insert_root(&conn, "/other")?;
+        let root_folder_id = insert_folder(&conn, root_id, "")?;
+        let nested_folder_id = insert_folder(&conn, root_id, "nested")?;
+        let other_folder_id = insert_folder(&conn, other_root_id, "")?;
+        let first = sample_file(root_folder_id);
+        let mut second = sample_file(nested_folder_id);
+        second.name = "other.txt".into();
+        second.size = 13;
+        second.hash = "b".repeat(64);
+        second.modified_secs = 789;
+        second.modified_nanos = 123;
+        let first_id = insert_file(&conn, &first)?;
+        let second_id = insert_file(&conn, &second)?;
+        insert_file(&conn, &sample_file(other_folder_id))?;
+
+        let mut files = get_files_by_root_id(&conn, root_id)?;
+        files.sort_by_key(|file| file.id);
+
+        assert_eq!(files.len(), 2);
+        for (actual, expected, id) in [
+            (&files[0], &first, first_id),
+            (&files[1], &second, second_id),
+        ] {
+            assert_eq!(actual.id, id);
+            assert_eq!(actual.folder_id, expected.folder_id);
+            assert_eq!(actual.name, expected.name);
+            assert_eq!(actual.size, expected.size);
+            assert_eq!(actual.hash, expected.hash);
+            assert_eq!(actual.modified_secs, expected.modified_secs);
+            assert_eq!(actual.modified_nanos, expected.modified_nanos);
+        }
+        assert!(get_files_by_root_id(&conn, 42)?.is_empty());
+        Ok(())
     }
 
     #[test]

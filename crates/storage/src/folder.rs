@@ -2,6 +2,13 @@ use rusqlite::{Connection, params};
 
 use crate::error::StorageError;
 
+#[derive(Debug)]
+pub struct Folder {
+    pub id: i64,
+    pub root_id: i64,
+    pub relative_path: String,
+}
+
 pub fn insert_folder(
     conn: &Connection,
     root_id: i64,
@@ -15,12 +22,63 @@ pub fn insert_folder(
     Ok(conn.last_insert_rowid())
 }
 
+pub fn get_folders_by_root_id(
+    conn: &Connection,
+    root_id: i64,
+) -> Result<Vec<Folder>, StorageError> {
+    let mut stmt =
+        conn.prepare("SELECT id, root_id, relative_path FROM folders WHERE root_id = ?1")?;
+
+    let rows = stmt.query_map([root_id], |row| {
+        Ok(Folder {
+            id: row.get(0)?,
+            root_id: row.get(1)?,
+            relative_path: row.get(2)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{insert_root, open};
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn gets_only_folders_for_the_selected_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let other_root_id = insert_root(&conn, "/other")?;
+        let root_folder_id = insert_folder(&conn, root_id, "")?;
+        let nested_id = insert_folder(&conn, root_id, "photos/trip")?;
+        insert_folder(&conn, other_root_id, "other")?;
+
+        let mut folders = get_folders_by_root_id(&conn, root_id)?;
+        folders.sort_by_key(|folder| folder.id);
+
+        assert_eq!(folders.len(), 2);
+        assert_eq!(
+            (
+                folders[0].id,
+                folders[0].root_id,
+                folders[0].relative_path.as_str()
+            ),
+            (root_folder_id, root_id, "")
+        );
+        assert_eq!(
+            (
+                folders[1].id,
+                folders[1].root_id,
+                folders[1].relative_path.as_str()
+            ),
+            (nested_id, root_id, "photos/trip")
+        );
+        assert!(get_folders_by_root_id(&conn, 42)?.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn saves_folders_with_their_root_and_relative_path() -> Result<(), Box<dyn Error>> {
