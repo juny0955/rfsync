@@ -1,5 +1,6 @@
 use std::{io, num::TryFromIntError, path::PathBuf, time::SystemTimeError};
 
+use rfsync_fs::error::FsError;
 use rfsync_storage::error::StorageError;
 use thiserror::Error;
 
@@ -19,6 +20,8 @@ pub enum EngineError {
     SnapshotAlreadyExists(i64),
     #[error("입출력 오류: {0}")]
     Io(#[from] io::Error),
+    #[error("파일 시스템 오류: {0}")]
+    Fs(#[from] FsError),
     #[error("저장소 오류: {0}")]
     Storage(#[from] StorageError),
     #[error("파일 시간 오류: {0}")]

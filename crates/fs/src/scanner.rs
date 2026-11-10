@@ -1,8 +1,9 @@
 use std::fs;
 use std::fs::File;
-use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use crate::error::FsError;
 
 #[derive(Debug)]
 pub struct ScanResult {
@@ -36,7 +37,7 @@ pub enum EntryKind {
 ///
 /// # Errors
 /// 디렉터리를 읽거나 항목을 확인할 수 없으면 오류를 반환합니다.
-pub fn scan(root: &Path) -> io::Result<ScanResult> {
+pub fn scan(root: &Path) -> Result<ScanResult, FsError> {
     let mut directories = vec![PathBuf::new()];
     let mut entries = Vec::new();
     let mut skipped = Vec::new();
@@ -75,7 +76,7 @@ pub fn scan(root: &Path) -> io::Result<ScanResult> {
     Ok(ScanResult { entries, skipped })
 }
 
-fn hash_file(file: &File) -> io::Result<String> {
+fn hash_file(file: &File) -> Result<String, FsError> {
     let mut hasher = blake3::Hasher::new();
     hasher.update_reader(file)?;
     Ok(hasher.finalize().to_hex().to_string())
@@ -87,7 +88,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn scans_nested_files_and_empty_directories() -> io::Result<()> {
+    fn scans_nested_files_and_empty_directories() -> Result<(), FsError> {
         let name = format!(
             "rfsync-scan-{}-{}",
             std::process::id(),
@@ -139,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn hashes_file_contents() -> io::Result<()> {
+    fn hashes_file_contents() -> Result<(), FsError> {
         let root = std::env::temp_dir().join(format!(
             "rfsync-hash-{}-{}",
             std::process::id(),
@@ -179,9 +180,9 @@ mod tests {
 
     #[test]
     fn returns_error_for_invalid_root() {
-        assert_eq!(
-            scan(Path::new("\0")).unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
-        );
+        assert!(matches!(
+            scan(Path::new("\0")),
+            Err(FsError::Scan(error)) if error.kind() == std::io::ErrorKind::InvalidInput
+        ));
     }
 }
