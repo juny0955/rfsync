@@ -6,25 +6,19 @@ use std::time::SystemTime;
 use crate::error::FsError;
 
 #[derive(Debug)]
-pub struct ScanResult {
-    pub entries: Vec<Entry>,
-    pub skipped: Vec<PathBuf>,
-}
-
-#[derive(Debug)]
-pub struct Entry {
+pub struct FsEntry {
     pub path: PathBuf,
-    pub kind: EntryKind,
+    pub kind: FsEntryKind,
 }
 
-impl Entry {
+impl FsEntry {
     pub fn is_dir(&self) -> bool {
-        matches!(self.kind, EntryKind::Directory)
+        matches!(self.kind, FsEntryKind::Directory)
     }
 }
 
 #[derive(Debug)]
-pub enum EntryKind {
+pub enum FsEntryKind {
     File {
         size: u64,
         hash: String,
@@ -37,10 +31,9 @@ pub enum EntryKind {
 ///
 /// # Errors
 /// 디렉터리를 읽거나 항목을 확인할 수 없으면 오류를 반환합니다.
-pub fn scan(root: &Path) -> Result<ScanResult, FsError> {
+pub fn scan(root: &Path) -> Result<Vec<FsEntry>, FsError> {
     let mut directories = vec![PathBuf::new()];
     let mut entries = Vec::new();
-    let mut skipped = Vec::new();
 
     while let Some(directory) = directories.pop() {
         for entry in fs::read_dir(root.join(&directory))? {
@@ -50,30 +43,28 @@ pub fn scan(root: &Path) -> Result<ScanResult, FsError> {
             let file_type = entry.file_type()?;
             if file_type.is_dir() {
                 directories.push(path.clone());
-                entries.push(Entry {
+                entries.push(FsEntry {
                     path,
-                    kind: EntryKind::Directory,
+                    kind: FsEntryKind::Directory,
                 });
             } else if file_type.is_file() {
                 let file = File::open(entry.path())?;
                 let metadata = file.metadata()?;
                 let hash = hash_file(&file)?;
 
-                entries.push(Entry {
+                entries.push(FsEntry {
                     path,
-                    kind: EntryKind::File {
+                    kind: FsEntryKind::File {
                         hash,
                         size: metadata.len(),
                         modified: metadata.modified()?,
                     },
                 });
-            } else {
-                skipped.push(path);
             }
         }
     }
 
-    Ok(ScanResult { entries, skipped })
+    Ok(entries)
 }
 
 fn hash_file(file: &File) -> Result<String, FsError> {
@@ -106,14 +97,10 @@ mod tests {
         std::os::unix::fs::symlink(&root, root.join("nested/link"))?;
 
         let modified = fs::metadata(root.join("nested/file.txt"))?.modified()?;
-        let result = scan(&root)?;
+        let entries = scan(&root)?;
         fs::remove_dir_all(&root)?;
 
-        let mut paths: Vec<_> = result
-            .entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect();
+        let mut paths: Vec<_> = entries.iter().map(|entry| entry.path.clone()).collect();
         paths.sort();
         let expected = vec![
             PathBuf::from("nested"),
@@ -122,20 +109,16 @@ mod tests {
         ];
         assert_eq!(paths, expected);
 
-        for entry in &result.entries {
+        for entry in &entries {
             if entry.path == Path::new("nested/file.txt") {
                 assert!(
-                    matches!(entry.kind, EntryKind::File { size: 4, modified: time, .. } if time == modified)
+                    matches!(entry.kind, FsEntryKind::File { size: 4, modified: time, .. } if time == modified)
                 );
             } else {
-                assert!(matches!(entry.kind, EntryKind::Directory));
+                assert!(matches!(entry.kind, FsEntryKind::Directory));
             }
         }
 
-        #[cfg(unix)]
-        assert_eq!(result.skipped, vec![PathBuf::from("nested/link")]);
-        #[cfg(not(unix))]
-        assert!(result.skipped.is_empty());
         Ok(())
     }
 
@@ -160,13 +143,12 @@ mod tests {
 
         let hash = |name| {
             let entry = result
-                .entries
                 .iter()
                 .find(|entry| entry.path == Path::new(name))
                 .unwrap();
             match &entry.kind {
-                EntryKind::File { hash, .. } => hash.as_str(),
-                EntryKind::Directory => panic!("expected a file"),
+                FsEntryKind::File { hash, .. } => hash.as_str(),
+                FsEntryKind::Directory => panic!("expected a file"),
             }
         };
         assert_eq!(
