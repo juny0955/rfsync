@@ -69,6 +69,16 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn delete_file_by_id(conn: &Connection, file_id: i64) -> Result<bool, StorageError> {
+    let deleted = conn.execute("DELETE FROM files WHERE id = ?1", [file_id])?;
+
+    if deleted == 0 {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +96,49 @@ mod tests {
             modified_secs: 123,
             modified_nanos: 456,
         }
+    }
+
+    #[test]
+    fn deletes_only_selected_file() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let file_id = insert_file(&conn, &sample_file(folder_id))?;
+        let mut other = sample_file(folder_id);
+        other.name = "other.txt".into();
+        let other_id = insert_file(&conn, &other)?;
+
+        assert!(delete_file_by_id(&conn, file_id)?);
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].id, other_id);
+        Ok(())
+    }
+
+    #[test]
+    fn returns_false_when_file_does_not_exist() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+
+        assert!(!delete_file_by_id(&conn, 42)?);
+        Ok(())
+    }
+
+    #[test]
+    fn rolls_back_file_deletion() -> Result<(), Box<dyn Error>> {
+        let mut conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let file_id = insert_file(&conn, &sample_file(folder_id))?;
+
+        let tx = conn.transaction()?;
+        assert!(delete_file_by_id(&tx, file_id)?);
+        tx.rollback()?;
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].id, file_id);
+        Ok(())
     }
 
     #[test]
