@@ -120,13 +120,13 @@ fn hash_file(file: &File) -> Result<String, FsError> {
 
 fn scan_file(path: &Path) -> Result<FsEntryKind, FsError> {
     let file = File::open(path)?;
-       let metadata = file.metadata()?;
+    let metadata = file.metadata()?;
 
-       Ok(FsEntryKind::File {
-           size: metadata.len(),
-           hash: hash_file(&file)?,
-           modified: metadata.modified()?,
-       })
+    Ok(FsEntryKind::File {
+        size: metadata.len(),
+        hash: hash_file(&file)?,
+        modified: metadata.modified()?,
+    })
 }
 
 #[cfg(test)]
@@ -138,7 +138,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "rfsync-scan-path-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir(&root)?;
         Ok(root)
@@ -154,8 +157,10 @@ mod tests {
         let entry = scan_path(&root, Path::new("nested/file"))?.unwrap();
 
         assert_eq!(entry.path, Path::new("nested/file"));
-        assert!(matches!(entry.kind, FsEntryKind::File { size: 4, ref hash, modified: time }
-            if hash == &blake3::hash(b"test").to_hex().to_string() && time == modified));
+        assert!(
+            matches!(entry.kind, FsEntryKind::File { size: 4, ref hash, modified: time }
+            if hash == &blake3::hash(b"test").to_hex().to_string() && time == modified)
+        );
         fs::remove_dir_all(root)?;
         Ok(())
     }

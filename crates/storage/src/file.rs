@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::StorageError;
 
@@ -69,6 +69,47 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn get_file_by_folder_and_name(
+    conn: &Connection,
+    root_id: i64,
+    folder_path: &str,
+    file_name: &str,
+) -> Result<Option<File>, StorageError> {
+    let file = conn
+        .query_row(
+            "
+            SELECT
+                files.id,
+                files.folder_id,
+                files.name,
+                files.fsize,
+                files.hash,
+                files.modified_secs,
+                files.modified_nanos
+            FROM files
+            JOIN folders ON files.folder_id = folders.id
+            WHERE folders.root_id = ?1
+                AND folders.relative_path = ?2
+                AND files.name = ?3
+            ",
+            params![root_id, folder_path, file_name],
+            |row| {
+                Ok(File {
+                    id: row.get(0)?,
+                    folder_id: row.get(1)?,
+                    name: row.get(2)?,
+                    size: row.get(3)?,
+                    hash: row.get(4)?,
+                    modified_secs: row.get(5)?,
+                    modified_nanos: row.get(6)?,
+                })
+            },
+        )
+        .optional()?;
+
+    Ok(file)
+}
+
 pub fn delete_file_by_id(conn: &Connection, file_id: i64) -> Result<bool, StorageError> {
     let deleted = conn.execute("DELETE FROM files WHERE id = ?1", [file_id])?;
 
@@ -118,6 +159,47 @@ mod tests {
             modified_secs: 123,
             modified_nanos: 456,
         }
+    }
+
+    #[test]
+    fn gets_file_by_folder_and_name_in_selected_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let first_root = insert_root(&conn, "/first")?;
+        let second_root = insert_root(&conn, "/second")?;
+        let first_folder = insert_folder(&conn, first_root, "docs")?;
+        let second_folder = insert_folder(&conn, second_root, "docs")?;
+        insert_file(&conn, &sample_file(first_folder))?;
+        let expected = sample_file(second_folder);
+        let id = insert_file(&conn, &expected)?;
+
+        let actual = get_file_by_folder_and_name(&conn, second_root, "docs", "memo.txt")?
+            .ok_or("missing file")?;
+
+        assert_eq!(actual.id, id);
+        assert_eq!(actual.folder_id, expected.folder_id);
+        assert_eq!(actual.name, expected.name);
+        assert_eq!(actual.size, expected.size);
+        assert_eq!(actual.hash, expected.hash);
+        assert_eq!(actual.modified_secs, expected.modified_secs);
+        assert_eq!(actual.modified_nanos, expected.modified_nanos);
+        Ok(())
+    }
+
+    #[test]
+    fn returns_none_when_file_folder_or_root_is_missing() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root = insert_root(&conn, "/example")?;
+        let folder = insert_folder(&conn, root, "")?;
+        let id = insert_file(&conn, &sample_file(folder))?;
+
+        assert_eq!(
+            get_file_by_folder_and_name(&conn, root, "", "memo.txt")?.map(|f| f.id),
+            Some(id)
+        );
+        assert!(get_file_by_folder_and_name(&conn, root, "", "missing")?.is_none());
+        assert!(get_file_by_folder_and_name(&conn, root, "missing", "memo.txt")?.is_none());
+        assert!(get_file_by_folder_and_name(&conn, -1, "", "memo.txt")?.is_none());
+        Ok(())
     }
 
     #[test]
