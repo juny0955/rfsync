@@ -1,6 +1,7 @@
-use std::fs;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::fs::{self, symlink_metadata};
+use std::io::ErrorKind;
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::error::FsError;
@@ -48,17 +49,9 @@ pub fn scan(root: &Path) -> Result<Vec<FsEntry>, FsError> {
                     kind: FsEntryKind::Directory,
                 });
             } else if file_type.is_file() {
-                let file = File::open(entry.path())?;
-                let metadata = file.metadata()?;
-                let hash = hash_file(&file)?;
-
                 entries.push(FsEntry {
                     path,
-                    kind: FsEntryKind::File {
-                        hash,
-                        size: metadata.len(),
-                        modified: metadata.modified()?,
-                    },
+                    kind: scan_file(&entry.path())?,
                 });
             }
         }
@@ -67,16 +60,153 @@ pub fn scan(root: &Path) -> Result<Vec<FsEntry>, FsError> {
     Ok(entries)
 }
 
+pub fn scan_path(root: &Path, path: &Path) -> Result<Option<FsEntry>, FsError> {
+    if path.as_os_str().is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(FsError::InvalidRelativePath(path.to_path_buf()));
+    }
+
+    let mut full_path = root.to_path_buf();
+    let mut components = path.components().peekable();
+
+    while let Some(component) = components.next() {
+        full_path.push(component.as_os_str());
+
+        let metadata = match symlink_metadata(&full_path) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        let file_type = metadata.file_type();
+
+        if file_type.is_symlink() {
+            return Ok(None);
+        }
+
+        // 중간 경로인데 현재 component가 dir 인지 검사
+        if components.peek().is_some() {
+            if !file_type.is_dir() {
+                return Ok(None);
+            }
+            continue;
+        }
+
+        let kind = if file_type.is_dir() {
+            FsEntryKind::Directory
+        } else if file_type.is_file() {
+            scan_file(&full_path)?
+        } else {
+            return Ok(None);
+        };
+
+        return Ok(Some(FsEntry {
+            path: path.to_path_buf(),
+            kind,
+        }));
+    }
+
+    unreachable!("unreachable")
+}
+
 fn hash_file(file: &File) -> Result<String, FsError> {
     let mut hasher = blake3::Hasher::new();
     hasher.update_reader(file)?;
     Ok(hasher.finalize().to_hex().to_string())
 }
 
+fn scan_file(path: &Path) -> Result<FsEntryKind, FsError> {
+    let file = File::open(path)?;
+       let metadata = file.metadata()?;
+
+       Ok(FsEntryKind::File {
+           size: metadata.len(),
+           hash: hash_file(&file)?,
+           modified: metadata.modified()?,
+       })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_root() -> Result<PathBuf, FsError> {
+        let root = std::env::temp_dir().join(format!(
+            "rfsync-scan-path-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root)?;
+        Ok(root)
+    }
+
+    #[test]
+    fn scan_path_reads_file_metadata_and_hash() -> Result<(), FsError> {
+        let root = test_root()?;
+        fs::create_dir(root.join("nested"))?;
+        fs::write(root.join("nested/file"), b"test")?;
+        let modified = fs::metadata(root.join("nested/file"))?.modified()?;
+
+        let entry = scan_path(&root, Path::new("nested/file"))?.unwrap();
+
+        assert_eq!(entry.path, Path::new("nested/file"));
+        assert!(matches!(entry.kind, FsEntryKind::File { size: 4, ref hash, modified: time }
+            if hash == &blake3::hash(b"test").to_hex().to_string() && time == modified));
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn scan_path_returns_directory_without_scanning_children() -> Result<(), FsError> {
+        let root = test_root()?;
+        fs::create_dir(root.join("nested"))?;
+        fs::write(root.join("nested/file"), b"test")?;
+
+        let entry = scan_path(&root, Path::new("nested"))?.unwrap();
+
+        assert_eq!(entry.path, Path::new("nested"));
+        assert!(matches!(entry.kind, FsEntryKind::Directory));
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn scan_path_returns_none_for_missing_path_or_file_parent() -> Result<(), FsError> {
+        let root = test_root()?;
+        fs::write(root.join("file"), b"test")?;
+
+        assert!(scan_path(&root, Path::new("missing/file"))?.is_none());
+        assert!(scan_path(&root, Path::new("file/child"))?.is_none());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn scan_path_rejects_invalid_relative_paths() {
+        for path in [Path::new(""), Path::new("../file"), Path::new("/file")] {
+            assert!(matches!(scan_path(Path::new("unused"), path),
+                Err(FsError::InvalidRelativePath(invalid)) if invalid == path));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_path_excludes_final_and_intermediate_symlinks() -> Result<(), FsError> {
+        let root = test_root()?;
+        fs::create_dir(root.join("nested"))?;
+        fs::write(root.join("nested/file"), b"test")?;
+        std::os::unix::fs::symlink(root.join("nested"), root.join("link"))?;
+        std::os::unix::fs::symlink(root.join("nested/file"), root.join("file-link"))?;
+
+        assert!(scan_path(&root, Path::new("link/file"))?.is_none());
+        assert!(scan_path(&root, Path::new("file-link"))?.is_none());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
 
     #[test]
     fn scans_nested_files_and_empty_directories() -> Result<(), FsError> {
