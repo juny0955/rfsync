@@ -2,7 +2,7 @@ use std::{path::Path, sync::mpsc};
 
 use rfsync_fs::FsEvent;
 
-use crate::error::EngineError;
+use crate::{error::EngineError, sync_root};
 
 pub fn watch_root(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     let conn = rfsync_storage::open(db_path)?;
@@ -14,12 +14,10 @@ pub fn watch_root(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     let _watcher = rfsync_fs::watch(root_path, tx)?;
 
     for result in rx {
+        println!("event: {result:?}");
         match result? {
-            FsEvent::Changed(path) => {
-                println!("Changed: {path:?}");
-            }
-            FsEvent::Rescan => {
-                println!("Rescan");
+            FsEvent::Changed(_) | FsEvent::Rescan => {
+                sync_root(root_id, db_path)?;
             }
         }
     }
