@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::StorageError;
 
@@ -40,6 +40,32 @@ pub fn get_folders_by_root_id(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn get_folder_by_path(
+    conn: &Connection,
+    root_id: i64,
+    relative_path: &str,
+) -> Result<Option<Folder>, StorageError> {
+    let folder = conn
+        .query_row(
+            "
+            SELECT id, root_id, relative_path
+            FROM folders
+            WHERE root_id = ?1 AND relative_path = ?2
+            ",
+            params![root_id, relative_path],
+            |row| {
+                Ok(Folder {
+                    id: row.get(0)?,
+                    root_id: row.get(1)?,
+                    relative_path: row.get(2)?,
+                })
+            },
+        )
+        .optional()?;
+
+    Ok(folder)
+}
+
 pub fn delete_folder_by_id(conn: &Connection, folder_id: i64) -> Result<bool, StorageError> {
     let deleted = conn.execute("DELETE FROM folders WHERE id = ?1", [folder_id])?;
 
@@ -52,6 +78,30 @@ mod tests {
     use crate::{File, get_files_by_root_id, insert_file, insert_root, open};
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn gets_folder_by_path_in_selected_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let first_root = insert_root(&conn, "/first")?;
+        let second_root = insert_root(&conn, "/second")?;
+        let root_folder_id = insert_folder(&conn, first_root, "")?;
+        insert_folder(&conn, first_root, "docs")?;
+        let folder_id = insert_folder(&conn, second_root, "docs")?;
+
+        let folder = get_folder_by_path(&conn, second_root, "docs")?.ok_or("missing folder")?;
+        assert_eq!(
+            (folder.id, folder.root_id, folder.relative_path.as_str()),
+            (folder_id, second_root, "docs")
+        );
+        assert_eq!(
+            get_folder_by_path(&conn, first_root, "")?.map(|f| f.id),
+            Some(root_folder_id)
+        );
+        assert!(get_folder_by_path(&conn, first_root, "missing")?.is_none());
+        assert!(get_folder_by_path(&conn, second_root, "")?.is_none());
+        assert!(get_folder_by_path(&conn, -1, "docs")?.is_none());
+        Ok(())
+    }
 
     #[test]
     fn deletes_folder_and_its_files_but_keeps_other_folders() -> Result<(), Box<dyn Error>> {
