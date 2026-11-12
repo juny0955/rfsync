@@ -40,6 +40,34 @@ pub fn get_folders_by_root_id(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn get_folders_with_under_path(
+    conn: &Connection,
+    root_id: i64,
+    relative_path: &str,
+) -> Result<Vec<Folder>, StorageError> {
+    let mut stmt = conn.prepare(
+        "
+            SELECT id, root_id, relative_path
+            FROM folders
+            WHERE root_id = ?1
+                AND (
+                    relative_path = ?2
+                    OR substr(relative_path, 1, length(?2) + 1) = ?2 || '/'
+                )
+        ",
+    )?;
+
+    let rows = stmt.query_map(params![root_id, relative_path], |row| {
+        Ok(Folder {
+            id: row.get(0)?,
+            root_id: row.get(1)?,
+            relative_path: row.get(2)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn get_folder_by_path(
     conn: &Connection,
     root_id: i64,
@@ -78,6 +106,57 @@ mod tests {
     use crate::{File, get_files_by_root_id, insert_file, insert_root, open};
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn gets_only_target_folder_and_descendants_in_selected_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/first")?;
+        let other_root = insert_root(&conn, "/second")?;
+        let root_folder = insert_folder(&conn, root_id, "")?;
+        let docs = insert_folder(&conn, root_id, "docs")?;
+        let work = insert_folder(&conn, root_id, "docs/work")?;
+        let nested = insert_folder(&conn, root_id, "docs/work/2026")?;
+        insert_folder(&conn, root_id, "docs-old")?;
+        insert_folder(&conn, root_id, "docs-old/work")?;
+        insert_folder(&conn, other_root, "docs/work")?;
+
+        let mut folders = get_folders_with_under_path(&conn, root_id, "docs")?;
+        folders.sort_by_key(|folder| folder.id);
+        assert_eq!(
+            folders
+                .iter()
+                .map(|f| (f.id, f.root_id, f.relative_path.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (docs, root_id, "docs"),
+                (work, root_id, "docs/work"),
+                (nested, root_id, "docs/work/2026")
+            ]
+        );
+        assert!(get_folders_with_under_path(&conn, root_id, "missing")?.is_empty());
+        assert!(get_folders_with_under_path(&conn, -1, "docs")?.is_empty());
+        let root_folders = get_folders_with_under_path(&conn, root_id, "")?;
+        assert_eq!(root_folders.len(), 1);
+        assert_eq!(root_folders[0].id, root_folder);
+        Ok(())
+    }
+
+    #[test]
+    fn treats_special_characters_in_folder_paths_literally() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        insert_folder(&conn, root_id, "문서%_")?;
+        insert_folder(&conn, root_id, "문서%_/하위")?;
+        insert_folder(&conn, root_id, "문서abc/하위")?;
+
+        let mut paths: Vec<_> = get_folders_with_under_path(&conn, root_id, "문서%_")?
+            .into_iter()
+            .map(|folder| folder.relative_path)
+            .collect();
+        paths.sort();
+        assert_eq!(paths, ["문서%_", "문서%_/하위"]);
+        Ok(())
+    }
 
     #[test]
     fn gets_folder_by_path_in_selected_root() -> Result<(), Box<dyn Error>> {
