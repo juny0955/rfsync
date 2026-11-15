@@ -69,6 +69,47 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn get_file_by_folder_id_and_name(
+    conn: &Connection,
+    root_id: i64,
+    folder_id: i64,
+    file_name: &str,
+) -> Result<Option<File>, StorageError> {
+    let file = conn
+        .query_row(
+            "
+            SELECT
+                files.id,
+                files.folder_id,
+                files.name,
+                files.fsize,
+                files.hash,
+                files.modified_secs,
+                files.modified_nanos
+            FROM files
+            JOIN folders ON files.folder_id = folders.id
+            WHERE folders.root_id = ?1
+                AND folders.id = ?2
+                AND files.name = ?3
+            ",
+            params![root_id, folder_id, file_name],
+            |row| {
+                Ok(File {
+                    id: row.get(0)?,
+                    folder_id: row.get(1)?,
+                    name: row.get(2)?,
+                    size: row.get(3)?,
+                    hash: row.get(4)?,
+                    modified_secs: row.get(5)?,
+                    modified_nanos: row.get(6)?,
+                })
+            },
+        )
+        .optional()?;
+
+    Ok(file)
+}
+
 pub fn get_file_by_folder_and_name(
     conn: &Connection,
     root_id: i64,
@@ -437,6 +478,56 @@ mod tests {
         assert!(
             matches!(result, Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _))) if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn finds_file_only_for_matching_root_folder_and_name() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root = insert_root(&conn, "/first")?;
+        let other_root = insert_root(&conn, "/second")?;
+        let folder = insert_folder(&conn, root, "docs")?;
+        let other_folder = insert_folder(&conn, root, "other")?;
+        let other_root_folder = insert_folder(&conn, other_root, "docs")?;
+        let mut file = File {
+            id: 0,
+            folder_id: folder,
+            name: "memo.txt".into(),
+            size: 42,
+            hash: "a".repeat(64),
+            modified_secs: 123,
+            modified_nanos: 456,
+        };
+        let id = insert_file(&conn, &file)?;
+        file.folder_id = other_folder;
+        insert_file(&conn, &file)?;
+        file.folder_id = other_root_folder;
+        insert_file(&conn, &file)?;
+
+        let actual = get_file_by_folder_id_and_name(&conn, root, folder, "memo.txt")?
+            .ok_or("missing file")?;
+        assert_eq!(
+            (actual.id, actual.folder_id, actual.name),
+            (id, folder, file.name)
+        );
+        assert_eq!(
+            (
+                actual.size,
+                actual.hash,
+                actual.modified_secs,
+                actual.modified_nanos
+            ),
+            (
+                file.size,
+                file.hash,
+                file.modified_secs,
+                file.modified_nanos
+            )
+        );
+        assert!(get_file_by_folder_id_and_name(&conn, other_root, folder, "memo.txt")?.is_none());
+        assert!(get_file_by_folder_id_and_name(&conn, root, -1, "memo.txt")?.is_none());
+        assert!(get_file_by_folder_id_and_name(&conn, root, folder, "missing")?.is_none());
+        assert!(get_file_by_folder_id_and_name(&conn, -1, folder, "memo.txt")?.is_none());
         Ok(())
     }
 }
