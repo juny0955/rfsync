@@ -13,3 +13,4 @@ edition = "2024"
 
 [workspace.dependencies]
 thiserror = "2.0.21"
+rusqlite = { version = "0.42.0", features = [ "bundled" ] }
