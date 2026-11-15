@@ -2,13 +2,16 @@ use rfsync_engine::error::EngineError;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "rfsync-snapshot-{}-{}",
+        "rfsync-snapshot-{}-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&path)?;
     Ok(path)
