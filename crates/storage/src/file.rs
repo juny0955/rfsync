@@ -69,6 +69,37 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn get_files_in_folder_ids(
+    conn: &Connection,
+    folder_ids: &[i64],
+) -> Result<Vec<File>, StorageError> {
+    if folder_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = vec!["?"; folder_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT id, folder_id, name, fsize, hash, modified_secs, modified_nanos
+         FROM files
+         WHERE folder_id IN ({placeholders})"
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(folder_ids.iter()), |row| {
+        Ok(File {
+            id: row.get(0)?,
+            folder_id: row.get(1)?,
+            name: row.get(2)?,
+            size: row.get(3)?,
+            hash: row.get(4)?,
+            modified_secs: row.get(5)?,
+            modified_nanos: row.get(6)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn get_file_by_folder_id_and_name(
     conn: &Connection,
     root_id: i64,
@@ -528,6 +559,75 @@ mod tests {
         assert!(get_file_by_folder_id_and_name(&conn, root, -1, "memo.txt")?.is_none());
         assert!(get_file_by_folder_id_and_name(&conn, root, folder, "missing")?.is_none());
         assert!(get_file_by_folder_id_and_name(&conn, -1, folder, "memo.txt")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn returns_files_only_from_requested_folders() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root = insert_root(&conn, "/first")?;
+        let other_root = insert_root(&conn, "/second")?;
+        let first = insert_folder(&conn, root, "first")?;
+        let second = insert_folder(&conn, root, "second")?;
+        let excluded = insert_folder(&conn, other_root, "first")?;
+        let mut file = File {
+            id: 0,
+            folder_id: first,
+            name: "memo.txt".into(),
+            size: 42,
+            hash: "a".repeat(64),
+            modified_secs: 123,
+            modified_nanos: 456,
+        };
+        let first_id = insert_file(&conn, &file)?;
+        file.folder_id = second;
+        let second_id = insert_file(&conn, &file)?;
+        file.folder_id = excluded;
+        insert_file(&conn, &file)?;
+
+        let mut files = get_files_in_folder_ids(&conn, &[first, second, first, -1])?;
+        files.sort_by_key(|file| file.id);
+        assert_eq!(files.len(), 2);
+        for (actual, id, folder_id) in
+            [(&files[0], first_id, first), (&files[1], second_id, second)]
+        {
+            assert_eq!(
+                (actual.id, actual.folder_id, actual.name.as_str()),
+                (id, folder_id, "memo.txt")
+            );
+            assert_eq!(
+                (
+                    actual.size,
+                    actual.hash.as_str(),
+                    actual.modified_secs,
+                    actual.modified_nanos
+                ),
+                (42, file.hash.as_str(), 123, 456)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn returns_no_files_for_empty_or_missing_folder_ids() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root = insert_root(&conn, "/first")?;
+        let folder = insert_folder(&conn, root, "first")?;
+        insert_file(
+            &conn,
+            &File {
+                id: 0,
+                folder_id: folder,
+                name: "memo.txt".into(),
+                size: 42,
+                hash: "a".repeat(64),
+                modified_secs: 123,
+                modified_nanos: 456,
+            },
+        )?;
+
+        assert!(get_files_in_folder_ids(&conn, &[])?.is_empty());
+        assert!(get_files_in_folder_ids(&conn, &[-1])?.is_empty());
         Ok(())
     }
 }
