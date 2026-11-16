@@ -4,8 +4,8 @@ use std::{
 };
 
 use rfsync_fs::{FsEntry, FsEntryKind};
-use rfsync_storage::{Folder, error::StorageError};
-use rusqlite::Transaction;
+use rfsync_storage::{Folder, Root, error::StorageError};
+use rusqlite::{Connection, Transaction};
 
 use crate::{
     diff::{SnapshotDiff, calc_diff},
@@ -60,39 +60,27 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Engin
 /// 3. 폴더 추가
 /// 4. 파일 추가
 /// 5. 파일 수정
-pub fn sync_root(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
-    let mut conn = rfsync_storage::open(db_path)?;
-    let root =
-        rfsync_storage::get_root(&conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
-
-    if !root.has_snapshot {
-        return Err(EngineError::NotInitializedRoot(root_id));
-    }
-
+pub(crate) fn sync_root(conn: &mut Connection, root: &Root) -> Result<(), EngineError> {
     let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
     // === START TRANSACTION ===
     let tx = conn.transaction().map_err(StorageError::from)?;
-    let folders = rfsync_storage::get_folders_by_root_id(&tx, root_id)?;
-    let files = rfsync_storage::get_files_by_root_id(&tx, root_id)?;
+    let folders = rfsync_storage::get_folders_by_root_id(&tx, root.id)?;
+    let files = rfsync_storage::get_files_by_root_id(&tx, root.id)?;
 
     let diff = calc_diff(&entries, &folders, &files)?;
-    apply_diff(&tx, root_id, &folders, diff)?;
+    apply_diff(&tx, root.id, &folders, diff)?;
     tx.commit().map_err(StorageError::from)?;
     // === END TRANSACTION ===
 
     Ok(())
 }
 
-pub fn sync_path(root_id: i64, db_path: &Path, target: &Path) -> Result<(), EngineError> {
-    let mut conn = rfsync_storage::open(db_path)?;
-    let root =
-        rfsync_storage::get_root(&conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
-
-    if !root.has_snapshot {
-        return Err(EngineError::NotInitializedRoot(root_id));
-    }
-
+pub(crate) fn sync_path(
+    conn: &mut Connection,
+    root: &Root,
+    target: &Path,
+) -> Result<(), EngineError> {
     let root_path = Path::new(&root.local_path);
     let entry = rfsync_fs::scan_path(root_path, target)?;
 
@@ -103,12 +91,12 @@ pub fn sync_path(root_id: i64, db_path: &Path, target: &Path) -> Result<(), Engi
     match entry {
         // 폴더
         Some(entry) if entry.is_dir() => {
-            sync_directory(&tx, root_id, root_path, target, &target_path, entry)?
+            sync_directory(&tx, root.id, root_path, target, &target_path, entry)?
         }
         // 파일
-        Some(entry) => sync_file(&tx, root_id, target, &target_path, entry)?,
+        Some(entry) => sync_file(&tx, root.id, target, &target_path, entry)?,
         // 스캔 결과 없음 -> 제거
-        None => remove_path(&tx, root_id, &target_path)?,
+        None => remove_path(&tx, root.id, &target_path)?,
     }
 
     tx.commit().map_err(StorageError::from)?;
@@ -339,15 +327,4 @@ fn split_parent_and_name(target_path: &str) -> (&str, &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_invalid_entry_paths() {
-        for path in ["", "..", "invalid\\name"] {
-            assert!(
-                matches!(portable_path(Path::new(path)), Err(EngineError::InvalidEntryPath(p)) if p == Path::new(path))
-            );
-        }
-    }
-}
+mod tests;

@@ -6,9 +6,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_engine::{
-    create_initial_snapshot, error::EngineError, register_root, sync_path, sync_root,
-};
+use super::sync_path_for_test;
+use crate::{create_initial_snapshot, error::EngineError, register_root, watch_path, watch_root};
 
 struct TestDir(PathBuf);
 
@@ -47,7 +46,7 @@ fn sync_path_converts_nested_file_to_folder() -> Result<(), Box<dyn Error>> {
     fs::create_dir(root.join("docs/item"))?;
     fs::write(root.join("docs/item/child"), b"new")?;
 
-    sync_path(root_id, &db, Path::new("docs/item"))?;
+    sync_path_for_test(root_id, &db, Path::new("docs/item"))?;
 
     let conn = rfsync_storage::open(&db)?;
     assert!(rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "item")?.is_none());
@@ -70,7 +69,7 @@ fn deleting_nested_folder_preserves_similar_sibling() -> Result<(), Box<dyn Erro
     create_initial_snapshot(root_id, &db)?;
     fs::remove_dir_all(root.join("docs/item"))?;
 
-    sync_path(root_id, &db, Path::new("docs/item"))?;
+    sync_path_for_test(root_id, &db, Path::new("docs/item"))?;
 
     let conn = rfsync_storage::open(&db)?;
     assert!(rfsync_storage::get_folders_with_under_path(&conn, root_id, "docs/item")?.is_empty());
@@ -97,7 +96,7 @@ fn sync_path_does_not_modify_other_root() -> Result<(), Box<dyn Error>> {
     create_initial_snapshot(second_id, &db)?;
     fs::remove_dir_all(first.join("docs"))?;
 
-    sync_path(first_id, &db, Path::new("docs"))?;
+    sync_path_for_test(first_id, &db, Path::new("docs"))?;
 
     let conn = rfsync_storage::open(&db)?;
     assert!(rfsync_storage::get_folders_with_under_path(&conn, first_id, "docs")?.is_empty());
@@ -120,14 +119,14 @@ fn repeated_folder_and_deleted_path_syncs_preserve_snapshot() -> Result<(), Box<
     let before = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "file")?
         .ok_or("missing file")?;
 
-    sync_path(root_id, &db, Path::new("docs"))?;
-    sync_path(root_id, &db, Path::new("docs"))?;
+    sync_path_for_test(root_id, &db, Path::new("docs"))?;
+    sync_path_for_test(root_id, &db, Path::new("docs"))?;
     let after = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "file")?
         .ok_or("missing file")?;
     assert_eq!((after.id, &after.hash), (before.id, &before.hash));
     fs::remove_dir_all(root.join("docs"))?;
-    sync_path(root_id, &db, Path::new("docs"))?;
-    sync_path(root_id, &db, Path::new("docs"))?;
+    sync_path_for_test(root_id, &db, Path::new("docs"))?;
+    sync_path_for_test(root_id, &db, Path::new("docs"))?;
     assert!(rfsync_storage::get_folders_with_under_path(&conn, root_id, "docs")?.is_empty());
     Ok(())
 }
@@ -144,7 +143,7 @@ fn missing_parent_folder_returns_error_without_changing_snapshot() -> Result<(),
     fs::write(root.join("new/file"), b"data")?;
 
     assert!(
-        matches!(sync_path(root_id, &db, Path::new("new/file")), Err(EngineError::ParentFolderNotFound(path)) if path == Path::new("new"))
+        matches!(sync_path_for_test(root_id, &db, Path::new("new/file")), Err(EngineError::ParentFolderNotFound(path)) if path == Path::new("new"))
     );
     let conn = rfsync_storage::open(&db)?;
     assert!(rfsync_storage::get_folder_by_path(&conn, root_id, "new")?.is_none());
@@ -163,7 +162,7 @@ fn sync_path_saves_scanned_file_metadata() -> Result<(), Box<dyn Error>> {
     create_initial_snapshot(root_id, &db)?;
     fs::write(root.join("file"), b"modified")?;
 
-    sync_path(root_id, &db, Path::new("file"))?;
+    sync_path_for_test(root_id, &db, Path::new("file"))?;
 
     let entry = rfsync_fs::scan_path(&root, Path::new("file"))?.ok_or("missing scanned file")?;
     let rfsync_fs::FsEntryKind::File {
@@ -194,20 +193,21 @@ fn sync_rejects_missing_root_and_invalid_paths() -> Result<(), Box<dyn Error>> {
     let root_id = register_root(&root, &db)?;
     create_initial_snapshot(root_id, &db)?;
     assert!(matches!(
-        sync_root(-1, &db),
+        watch_root(-1, &db),
         Err(EngineError::RootNotFound(-1))
     ));
-    assert!(matches!(
-        sync_path(-1, &db, Path::new("file")),
-        Err(EngineError::RootNotFound(-1))
-    ));
+    let unregistered = dir.0.join("unregistered");
+    fs::create_dir(&unregistered)?;
+    assert!(
+        matches!(watch_path(&unregistered, &db), Err(EngineError::RootNotFoundByPath(path)) if path == unregistered)
+    );
     for path in [
         Path::new(""),
         Path::new("../outside"),
         Path::new("/absolute"),
     ] {
         assert!(matches!(
-            sync_path(root_id, &db, path),
+            sync_path_for_test(root_id, &db, path),
             Err(EngineError::Fs(_))
         ));
     }

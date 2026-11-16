@@ -6,9 +6,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_engine::{
-    create_initial_snapshot, error::EngineError, register_root, sync_path, sync_root,
-};
+use super::{sync_path_for_test, sync_root_for_test};
+use crate::{create_initial_snapshot, error::EngineError, register_root, watch_path, watch_root};
 
 struct Fixture {
     dir: PathBuf,
@@ -92,7 +91,7 @@ fn sync_root_applies_changes_and_preserves_unchanged_files() -> Result<(), Box<d
     fs::create_dir(f.root.join("added"))?;
     fs::write(f.root.join("added/new"), b"new")?;
 
-    sync_root(f.root_id, &f.db)?;
+    sync_root_for_test(f.root_id, &f.db)?;
 
     assert_eq!(
         f.snapshot()?,
@@ -123,7 +122,7 @@ fn sync_path_updates_only_selected_folder_tree() -> Result<(), Box<dyn Error>> {
     fs::write(f.root.join("docs/new/file"), b"new")?;
     fs::remove_dir_all(f.root.join("docs-old"))?;
 
-    sync_path(f.root_id, &f.db, Path::new("docs"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
 
     assert_eq!(
         f.snapshot()?,
@@ -150,14 +149,14 @@ fn sync_path_handles_file_creation_modification_and_deletion() -> Result<(), Box
     create_initial_snapshot(f.root_id, &f.db)?;
     let target = Path::new("file");
     fs::write(f.root.join(target), b"new")?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     assert_eq!(f.snapshot()?.1, [("file".into(), 3)]);
     let conn = rfsync_storage::open(&f.db)?;
     let original_hash = rfsync_storage::get_files_by_root_id(&conn, f.root_id)?[0]
         .hash
         .clone();
     fs::write(f.root.join(target), b"alt")?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     assert_eq!(f.snapshot()?.1, [("file".into(), 3)]);
     assert_ne!(
         rfsync_storage::get_files_by_root_id(&conn, f.root_id)?[0].hash,
@@ -165,7 +164,7 @@ fn sync_path_handles_file_creation_modification_and_deletion() -> Result<(), Box
     );
     drop(conn);
     fs::remove_file(f.root.join(target))?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     assert!(f.snapshot()?.1.is_empty());
     Ok(())
 }
@@ -179,7 +178,7 @@ fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(),
     fs::remove_file(f.root.join(target))?;
     fs::create_dir_all(f.root.join("item/nested"))?;
     fs::write(f.root.join("item/nested/file"), b"new")?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     assert_eq!(
         f.snapshot()?,
         (
@@ -189,14 +188,14 @@ fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(),
     );
     fs::remove_dir_all(f.root.join(target))?;
     fs::write(f.root.join(target), b"file")?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     assert_eq!(f.snapshot()?, (vec!["".into()], vec![("item".into(), 4)]));
     fs::remove_file(f.root.join(target))?;
     fs::create_dir_all(f.root.join("item/nested"))?;
     fs::write(f.root.join("item/nested/file"), b"new")?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     fs::remove_dir_all(f.root.join(target))?;
-    sync_path(f.root_id, &f.db, target)?;
+    sync_path_for_test(f.root_id, &f.db, target)?;
     assert_eq!(f.snapshot()?, (vec!["".into()], vec![]));
     Ok(())
 }
@@ -213,7 +212,7 @@ fn sync_path_rolls_back_when_subtree_has_invalid_path() -> Result<(), Box<dyn Er
     fs::write(f.root.join("item/invalid\\name"), b"new")?;
 
     assert!(matches!(
-        sync_path(f.root_id, &f.db, Path::new("item")),
+        sync_path_for_test(f.root_id, &f.db, Path::new("item")),
         Err(EngineError::InvalidEntryPath(_))
     ));
     assert_eq!(f.snapshot()?, before);
@@ -231,7 +230,7 @@ fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error
     fs::write(f.root.join("invalid\\name"), b"new")?;
 
     assert!(matches!(
-        sync_root(f.root_id, &f.db),
+        sync_root_for_test(f.root_id, &f.db),
         Err(EngineError::InvalidEntryPath(_))
     ));
     assert_eq!(f.snapshot()?, before);
@@ -242,10 +241,10 @@ fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error
 fn synchronization_rejects_uninitialized_root() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     assert!(
-        matches!(sync_root(f.root_id, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
+        matches!(watch_root(f.root_id, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
     );
     assert!(
-        matches!(sync_path(f.root_id, &f.db, Path::new("file")), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
+        matches!(watch_path(&f.root, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
     );
     Ok(())
 }

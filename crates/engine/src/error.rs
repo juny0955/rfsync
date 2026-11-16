@@ -27,6 +27,9 @@ pub enum EngineError {
     #[error("등록되지 않은 root입니다: {0}")]
     RootNotFound(i64),
 
+    #[error("등록되지 않은 root path입니다: {0}")]
+    RootNotFoundByPath(PathBuf),
+
     #[error("초기 스냅샵이 없는 root입니다: {0}")]
     NotInitializedRoot(i64),
 
