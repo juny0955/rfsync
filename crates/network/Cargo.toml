@@ -1,0 +1,6 @@
+[package]
+name = "rfsync-network"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

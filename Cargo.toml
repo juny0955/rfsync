@@ -4,6 +4,7 @@ members = [
     "apps/cli",
     "crates/engine",
     "crates/fs",
+    "crates/network",
     "crates/storage",
 ]
 
