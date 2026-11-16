@@ -132,19 +132,56 @@ fn scan_file(path: &Path) -> Result<FsEntryKind, FsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_root() -> Result<PathBuf, FsError> {
-        let root = std::env::temp_dir().join(format!(
-            "rfsync-scan-path-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&root)?;
-        Ok(root)
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+        loop {
+            let root = std::env::temp_dir().join(format!(
+                "rfsync-scan-path-{}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&root) {
+                Ok(()) => return Ok(root),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    #[test]
+    fn creates_distinct_test_roots_concurrently() -> Result<(), FsError> {
+        let barrier = std::sync::Barrier::new(16);
+        let roots = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        test_root()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+
+        assert_eq!(
+            roots.iter().collect::<std::collections::HashSet<_>>().len(),
+            roots.len()
+        );
+        for root in roots {
+            fs::remove_dir_all(root)?;
+        }
+        Ok(())
     }
 
     #[test]
