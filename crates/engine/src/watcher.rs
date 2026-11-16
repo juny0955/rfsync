@@ -37,6 +37,9 @@ fn watch(mut conn: Connection, root: Root) -> Result<(), EngineError> {
     let root_path = Path::new(&root.local_path);
     let _watcher = rfsync_fs::watch(root_path, tx)?;
 
+    // 감시 이벤트 수신 전 전체 동기화
+    sync_root(&mut conn, &root)?;
+
     for result in rx {
         match result? {
             FsEvent::Changed(path) => {
