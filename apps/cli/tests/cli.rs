@@ -16,7 +16,7 @@ fn registers_root_and_reports_duplicate() -> Result<(), Box<dyn Error>> {
     let run = || {
         Command::new(env!("CARGO_BIN_EXE_rfsync"))
             .current_dir(&dir)
-            .arg("root")
+            .args(["add", "root"])
             .output()
     };
     let first = run()?;

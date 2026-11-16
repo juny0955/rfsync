@@ -28,9 +28,11 @@ pub fn insert_root(conn: &Connection, local_path: &str) -> Result<i64, StorageEr
 pub fn get_root(conn: &Connection, root_id: i64) -> Result<Option<Root>, StorageError> {
     let root = conn
         .query_row(
-            "SELECT id, local_path, has_snapshot
-        FROM roots
-        WHERE id = ?1",
+            "
+            SELECT id, local_path, has_snapshot
+            FROM roots
+            WHERE id = ?1
+        ",
             [root_id],
             |row| {
                 Ok(Root {
@@ -45,14 +47,36 @@ pub fn get_root(conn: &Connection, root_id: i64) -> Result<Option<Root>, Storage
     Ok(root)
 }
 
-pub fn mark_root_has_snapshot(conn: &Connection, root_id: i64) -> Result<(), StorageError> {
+pub fn get_root_by_path(conn: &Connection, local_path: &str) -> Result<Option<Root>, StorageError> {
+    let root = conn
+        .query_row(
+            "
+            SELECT id, local_path, has_snapshot
+            FROM roots
+            WHERE local_path = ?1
+        ",
+            [local_path],
+            |row| {
+                Ok(Root {
+                    id: row.get(0)?,
+                    local_path: row.get(1)?,
+                    has_snapshot: row.get(2)?,
+                })
+            },
+        )
+        .optional()?;
+
+    Ok(root)
+}
+
+pub fn mark_root_has_snapshot(conn: &Connection, root_id: i64) -> Result<bool, StorageError> {
     let updated = conn.execute("UPDATE roots SET has_snapshot = 1 WHERE id = ?1", [root_id])?;
 
     if updated == 0 {
-        return Err(StorageError::RootNotFound(root_id));
+        return Ok(false);
     }
 
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -78,7 +102,7 @@ mod tests {
         let root_id = insert_root(&conn, "/example")?;
         let other_id = insert_root(&conn, "/other")?;
 
-        mark_root_has_snapshot(&conn, root_id)?;
+        assert!(mark_root_has_snapshot(&conn, root_id)?);
 
         assert!(
             get_root(&conn, root_id)?
@@ -94,12 +118,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_marking_missing_root() -> Result<(), Box<dyn Error>> {
+    fn returns_false_when_marking_missing_root() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
-        let result = mark_root_has_snapshot(&conn, 42);
-
-        assert!(matches!(result, Err(StorageError::RootNotFound(42))));
+        assert!(!mark_root_has_snapshot(&conn, 42)?);
         Ok(())
     }
 
@@ -109,7 +131,7 @@ mod tests {
         let root_id = insert_root(&conn, "/example")?;
 
         let tx = conn.transaction()?;
-        mark_root_has_snapshot(&tx, root_id)?;
+        assert!(mark_root_has_snapshot(&tx, root_id)?);
         tx.rollback()?;
 
         assert!(
@@ -170,6 +192,36 @@ mod tests {
         assert_eq!(root.id, root_id);
         assert_eq!(root.local_path, "/example");
         assert!(root.has_snapshot);
+        Ok(())
+    }
+
+    #[test]
+    fn gets_registered_roots_by_exact_path() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let first_id = insert_root(&conn, "/example")?;
+        let second_id = insert_root(&conn, "/example-other")?;
+        mark_root_has_snapshot(&conn, second_id)?;
+
+        for (path, id, has_snapshot) in [
+            ("/example", first_id, false),
+            ("/example-other", second_id, true),
+        ] {
+            let root = get_root_by_path(&conn, path)?.ok_or("root not found")?;
+            assert_eq!(
+                (root.id, root.local_path.as_str(), root.has_snapshot),
+                (id, path, has_snapshot)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn returns_none_for_unregistered_root_path() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        insert_root(&conn, "/example")?;
+
+        assert!(get_root_by_path(&conn, "/missing")?.is_none());
+        assert!(get_root_by_path(&conn, "/exam")?.is_none());
         Ok(())
     }
 

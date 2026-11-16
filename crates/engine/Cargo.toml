@@ -7,3 +7,4 @@ edition.workspace = true
 rfsync-fs = { path = "../fs" }
 rfsync-storage = { path = "../storage" }
 thiserror.workspace = true
+rusqlite.workspace = true
