@@ -9,6 +9,8 @@ use std::{
 use super::{sync_path_for_test, sync_root_for_test};
 use crate::{create_initial_snapshot, error::EngineError, register_root, watch_path, watch_root};
 
+type Snapshot = (Vec<String>, Vec<(String, i64)>);
+
 struct Fixture {
     dir: PathBuf,
     root: PathBuf,
@@ -37,7 +39,7 @@ impl Fixture {
         })
     }
 
-    fn snapshot(&self) -> Result<(Vec<String>, Vec<(String, i64)>), Box<dyn Error>> {
+    fn snapshot(&self) -> Result<Snapshot, Box<dyn Error>> {
         let conn = rfsync_storage::open(&self.db)?;
         let mut folders: Vec<_> = rfsync_storage::get_folders_by_root_id(&conn, self.root_id)?
             .into_iter()
