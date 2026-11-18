@@ -1,5 +1,6 @@
 pub mod error;
-pub mod pairing;
+mod pairing;
+mod spake2;
 
 pub use error::*;
 pub use pairing::*;
