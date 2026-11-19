@@ -9,7 +9,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     NetworkError,
-    cert::generate_certificate,
     pairing::{
         spake2::{PartyState, start_a, start_b},
         tcp::{bind_tcp, connect_tcp, receive_message, send_message},
@@ -22,42 +21,48 @@ mod tcp;
 const A_TO_B: &[u8] = b"rfsync/v1/cert/A-to-B";
 const B_TO_A: &[u8] = b"rfsync/v1/cert/B-to-A";
 
-pub async fn listen_pairing(addr: SocketAddr, code: &str) -> Result<(), NetworkError> {
-    let (certificate, _private_key) = generate_certificate("local")?;
+pub async fn listen_pairing(
+    addr: SocketAddr,
+    code: &str,
+    certificate: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
     let mut stream = bind_tcp(addr).await?;
 
     let (message, state) = start_a(code)?;
     let output = verify_spake2(&mut stream, &message, state).await?;
 
-    let _peer_cert = exchange_certificate(
+    let peer_cert = exchange_certificate(
         &mut stream,
-        &certificate,
+        certificate,
         output.session_key.as_bytes(),
         A_TO_B,
         B_TO_A,
     )
     .await?;
 
-    Ok(())
+    Ok(peer_cert)
 }
 
-pub async fn connect_pairing(addr: SocketAddr, code: &str) -> Result<(), NetworkError> {
-    let (certificate, _private_key) = generate_certificate("local")?;
+pub async fn connect_pairing(
+    addr: SocketAddr,
+    code: &str,
+    certificate: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
     let mut stream = connect_tcp(addr).await?;
 
     let (message, state) = start_b(code)?;
     let output = verify_spake2(&mut stream, &message, state).await?;
 
-    let _peer_cert = exchange_certificate(
+    let peer_cert = exchange_certificate(
         &mut stream,
-        &certificate,
+        certificate,
         output.session_key.as_bytes(),
         B_TO_A,
         A_TO_B,
     )
     .await?;
 
-    Ok(())
+    Ok(peer_cert)
 }
 
 pub fn generate_pairing_code() -> String {
@@ -130,10 +135,10 @@ mod tests {
     use std::{error::Error, io::ErrorKind};
 
     use super::{
-        A_TO_B, B_TO_A, connect_pairing, exchange_certificate, generate_certificate,
-        generate_pairing_code, listen_pairing, receive_message, send_message, start_a,
+        A_TO_B, B_TO_A, connect_pairing, exchange_certificate, generate_pairing_code,
+        listen_pairing, receive_message, send_message, start_a,
     };
-    use crate::NetworkError;
+    use crate::{NetworkError, cert::generate_certificate};
     use tokio::{
         io::duplex,
         net::TcpListener,
@@ -143,7 +148,10 @@ mod tests {
     async fn exchange_with_client(
         server_code: &str,
         client_code: &str,
-    ) -> Result<(Result<(), NetworkError>, Result<(), NetworkError>), Box<dyn Error>> {
+        server_certificate: &[u8],
+        client_certificate: &[u8],
+    ) -> Result<(Result<Vec<u8>, NetworkError>, Result<Vec<u8>, NetworkError>), Box<dyn Error>>
+    {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
 
@@ -156,20 +164,21 @@ mod tests {
             send_message(&mut stream, &output.confirmation_mac).await?;
             let confirmation = receive_message(&mut stream).await?;
             output.verify_peer_confirmation(&confirmation)?;
-            let (certificate, _) = generate_certificate("local")?;
             exchange_certificate(
                 &mut stream,
-                &certificate,
+                server_certificate,
                 output.session_key.as_bytes(),
                 A_TO_B,
                 B_TO_A,
             )
-            .await?;
-            Ok::<(), NetworkError>(())
+            .await
         };
 
         Ok(timeout(Duration::from_secs(5), async {
-            tokio::join!(server, connect_pairing(address, client_code))
+            tokio::join!(
+                server,
+                connect_pairing(address, client_code, client_certificate)
+            )
         })
         .await?)
     }
@@ -230,16 +239,32 @@ mod tests {
 
     #[tokio::test]
     async fn connect_pairing_confirms_both_peers_when_codes_match() -> Result<(), Box<dyn Error>> {
-        let (server, client) = exchange_with_client("00123456", "00123456").await?;
+        let (server_certificate, _) = generate_certificate("a.local")?;
+        let (client_certificate, _) = generate_certificate("b.local")?;
+        let (server, client) = exchange_with_client(
+            "00123456",
+            "00123456",
+            &server_certificate,
+            &client_certificate,
+        )
+        .await?;
 
-        server?;
-        client?;
+        assert_eq!(server?, client_certificate);
+        assert_eq!(client?, server_certificate);
         Ok(())
     }
 
     #[tokio::test]
     async fn connect_pairing_rejects_both_peers_when_codes_differ() -> Result<(), Box<dyn Error>> {
-        let (server, client) = exchange_with_client("00123456", "00123457").await?;
+        let (server_certificate, _) = generate_certificate("a.local")?;
+        let (client_certificate, _) = generate_certificate("b.local")?;
+        let (server, client) = exchange_with_client(
+            "00123456",
+            "00123457",
+            &server_certificate,
+            &client_certificate,
+        )
+        .await?;
 
         assert!(matches!(
             server,
@@ -269,8 +294,11 @@ mod tests {
     {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
+        let (certificate, _) = generate_certificate("local")?;
 
-        let error = listen_pairing(address, "00123456").await.unwrap_err();
+        let error = listen_pairing(address, "00123456", &certificate)
+            .await
+            .unwrap_err();
 
         assert!(matches!(error, NetworkError::Io(error) if error.kind() == ErrorKind::AddrInUse));
         Ok(())
