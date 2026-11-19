@@ -12,6 +12,7 @@ pakery-core = "0.6.2"
 pakery-spake2 = "0.6.2"
 pakery-crypto = { version = "0.6.2", features = ["spake2", "p256"] }
 rand = { version = "0.10.4", features = ["unbiased"] }
+ring = "0.17.14"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time"] }
