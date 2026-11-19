@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
@@ -9,7 +9,10 @@ use crate::NetworkError;
 
 const MAX_MESSAGE_SIZE: usize = 4096;
 
-pub async fn send_message(stream: &mut TcpStream, message: &[u8]) -> Result<(), NetworkError> {
+pub async fn send_message(
+    stream: &mut (impl AsyncWrite + Unpin),
+    message: &[u8],
+) -> Result<(), NetworkError> {
     if message.len() > MAX_MESSAGE_SIZE {
         return Err(NetworkError::MessageTooLarge {
             max: MAX_MESSAGE_SIZE,
@@ -28,7 +31,9 @@ pub async fn send_message(stream: &mut TcpStream, message: &[u8]) -> Result<(), 
     Ok(())
 }
 
-pub async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>, NetworkError> {
+pub async fn receive_message(
+    stream: &mut (impl AsyncRead + Unpin),
+) -> Result<Vec<u8>, NetworkError> {
     let length = usize::from(stream.read_u16().await?);
 
     if length > MAX_MESSAGE_SIZE {

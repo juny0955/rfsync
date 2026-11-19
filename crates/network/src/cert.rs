@@ -2,8 +2,8 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 use crate::NetworkError;
 
-pub fn generate_certificate(subject: String) -> Result<(Vec<u8>, Vec<u8>), NetworkError> {
-    let subject_alt_names = vec![subject];
+pub fn generate_certificate(subject: &str) -> Result<(Vec<u8>, Vec<u8>), NetworkError> {
+    let subject_alt_names = vec![subject.to_string()];
 
     let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)?;
 
