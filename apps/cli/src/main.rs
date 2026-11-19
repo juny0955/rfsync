@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::ExitCode};
+use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
@@ -21,6 +21,13 @@ enum Command {
         /// 감시할 폴더 경로
         path: PathBuf,
     },
+    /// 페어링을 시작합니다.
+    PairListen,
+    /// 주소와 코드를 입력하여 페어링합니다.
+    PairConnect {
+        addr: SocketAddr,
+        code: String,
+    }
 }
 
 fn main() -> ExitCode {
@@ -49,6 +56,12 @@ fn main() -> ExitCode {
                 eprintln!("동기화 실패: {e}");
                 return ExitCode::FAILURE;
             }
+        }
+        Command::PairListen => {
+            println!("페어링 시작");
+        }
+        Command::PairConnect { addr, code } => {
+            println!("페어링 시작 addr: {addr}, code: {code}");
         }
     }
 

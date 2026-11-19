@@ -245,7 +245,6 @@ dependencies = [
  "clap",
  "rfsync-engine",
  "rfsync-storage",
- "tokio",
 ]
 
 [[package]]
@@ -1055,7 +1054,6 @@ name = "rfsync-engine"
 version = "0.1.0"
 dependencies = [
  "rfsync-fs",
- "rfsync-network",
  "rfsync-storage",
  "rusqlite",
  "thiserror",
