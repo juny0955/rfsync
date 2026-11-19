@@ -1,6 +1,6 @@
 use pakery_core::crypto::{CpaceGroup, Hash};
 use pakery_crypto::{P256Group, Sha512Hash, Spake2P256};
-use pakery_spake2::{PartyA, PartyAState, PartyB, PartyBState, Spake2Error};
+use pakery_spake2::{PartyA, PartyAState, PartyB, PartyBState, Spake2Error, Spake2Output};
 
 use crate::NetworkError;
 
@@ -8,7 +8,23 @@ const IDENTITY_A: &str = "rfsync-identity-a";
 const IDENTITY_B: &str = "rfsync-identity-b";
 const AAD: &str = "rfsync-pairing-v1";
 
-pub fn start_a(code: &str) -> Result<(Vec<u8>, PartyAState<Spake2P256>), NetworkError> {
+pub enum PartyState {
+    PartyA(PartyAState<Spake2P256>),
+    PartyB(PartyBState<Spake2P256>),
+}
+
+impl PartyState {
+    pub fn finish(self, message: &[u8]) -> Result<Spake2Output, NetworkError> {
+        let output = match self {
+            Self::PartyA(state) => state.finish(message)?,
+            Self::PartyB(state) => state.finish(message)?,
+        };
+
+        Ok(output)
+    }
+}
+
+pub fn start_a(code: &str) -> Result<(Vec<u8>, PartyState), NetworkError> {
     let w = generate_w(code)?;
     let mut rng = rand::rng();
 
@@ -20,10 +36,10 @@ pub fn start_a(code: &str) -> Result<(Vec<u8>, PartyAState<Spake2P256>), Network
         &mut rng,
     )?;
 
-    Ok((message, state))
+    Ok((message, PartyState::PartyA(state)))
 }
 
-pub fn start_b(code: &str) -> Result<(Vec<u8>, PartyBState<Spake2P256>), NetworkError> {
+pub fn start_b(code: &str) -> Result<(Vec<u8>, PartyState), NetworkError> {
     let w = generate_w(code)?;
     let mut rng = rand::rng();
 
@@ -35,7 +51,7 @@ pub fn start_b(code: &str) -> Result<(Vec<u8>, PartyBState<Spake2P256>), Network
         &mut rng,
     )?;
 
-    Ok((message, state))
+    Ok((message, PartyState::PartyB(state)))
 }
 
 fn generate_w(code: &str) -> Result<<P256Group as CpaceGroup>::Scalar, NetworkError> {

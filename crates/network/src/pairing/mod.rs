@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use pakery_spake2::Spake2Output;
 use ring::{
     hkdf::{self, HKDF_SHA256, Prk},
     hmac,
@@ -10,7 +11,7 @@ use crate::{
     NetworkError,
     cert::generate_certificate,
     pairing::{
-        spake2::{start_a, start_b},
+        spake2::{PartyState, start_a, start_b},
         tcp::{bind_tcp, connect_tcp, receive_message, send_message},
     },
 };
@@ -26,17 +27,12 @@ pub async fn listen_pairing(addr: SocketAddr, code: &str) -> Result<(), NetworkE
     let mut stream = bind_tcp(addr).await?;
 
     let (message, state) = start_a(code)?;
-    let message_b = exchange_messge(&mut stream, &message).await?;
-
-    let output_a = state.finish(&message_b)?;
-
-    let confirmation_b = exchange_messge(&mut stream, &output_a.confirmation_mac).await?;
-    output_a.verify_peer_confirmation(&confirmation_b)?;
+    let output = verify_spake2(&mut stream, &message, state).await?;
 
     let _peer_cert = exchange_certificate(
         &mut stream,
         &certificate,
-        output_a.session_key.as_bytes(),
+        output.session_key.as_bytes(),
         A_TO_B,
         B_TO_A,
     )
@@ -50,17 +46,12 @@ pub async fn connect_pairing(addr: SocketAddr, code: &str) -> Result<(), Network
     let mut stream = connect_tcp(addr).await?;
 
     let (message, state) = start_b(code)?;
-    let message_a = exchange_messge(&mut stream, &message).await?;
-
-    let output_b = state.finish(&message_a)?;
-
-    let confirmation_a = exchange_messge(&mut stream, &output_b.confirmation_mac).await?;
-    output_b.verify_peer_confirmation(&confirmation_a)?;
+    let output = verify_spake2(&mut stream, &message, state).await?;
 
     let _peer_cert = exchange_certificate(
         &mut stream,
         &certificate,
-        output_b.session_key.as_bytes(),
+        output.session_key.as_bytes(),
         B_TO_A,
         A_TO_B,
     )
@@ -72,6 +63,21 @@ pub async fn connect_pairing(addr: SocketAddr, code: &str) -> Result<(), Network
 pub fn generate_pairing_code() -> String {
     let number = rand::random_range(0..100_000_000u32);
     format!("{number:08}")
+}
+
+async fn verify_spake2(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    message: &[u8],
+    state: PartyState,
+) -> Result<Spake2Output, NetworkError> {
+    let peer_message = exchange_messge(stream, message).await?;
+
+    let output = state.finish(&peer_message)?;
+
+    let confirmation = exchange_messge(stream, &output.confirmation_mac).await?;
+    output.verify_peer_confirmation(&confirmation)?;
+
+    Ok(output)
 }
 
 async fn exchange_certificate(
