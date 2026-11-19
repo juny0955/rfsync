@@ -13,12 +13,7 @@ pub async fn send_message(
     stream: &mut (impl AsyncWrite + Unpin),
     message: &[u8],
 ) -> Result<(), NetworkError> {
-    if message.len() > MAX_MESSAGE_SIZE {
-        return Err(NetworkError::MessageTooLarge {
-            max: MAX_MESSAGE_SIZE,
-            size: message.len(),
-        });
-    }
+    validate_message_size(message.len())?;
 
     let length = u16::try_from(message.len()).map_err(|_| NetworkError::MessageTooLarge {
         max: MAX_MESSAGE_SIZE,
@@ -35,13 +30,7 @@ pub async fn receive_message(
     stream: &mut (impl AsyncRead + Unpin),
 ) -> Result<Vec<u8>, NetworkError> {
     let length = usize::from(stream.read_u16().await?);
-
-    if length > MAX_MESSAGE_SIZE {
-        return Err(NetworkError::MessageTooLarge {
-            max: MAX_MESSAGE_SIZE,
-            size: length,
-        });
-    }
+    validate_message_size(length)?;
 
     let mut message = vec![0; length];
     stream.read_exact(&mut message).await?;
@@ -57,6 +46,17 @@ pub async fn bind_tcp(addr: SocketAddr) -> Result<TcpStream, NetworkError> {
 
 pub async fn connect_tcp(addr: SocketAddr) -> Result<TcpStream, NetworkError> {
     Ok(TcpStream::connect(addr).await?)
+}
+
+fn validate_message_size(length: usize) -> Result<(), NetworkError> {
+    if length > MAX_MESSAGE_SIZE {
+        return Err(NetworkError::MessageTooLarge {
+            max: MAX_MESSAGE_SIZE,
+            size: length,
+        });
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
