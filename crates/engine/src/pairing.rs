@@ -4,18 +4,21 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_network::{Connection, Endpoint, generate_pairing_code};
+use rfsync_network::{Connection, Endpoint};
 
 use crate::error::EngineError;
 
 const SERVER_NAME: &str = "rfsync";
 pub const DEFAULT_PORT: u16 = 10_000;
 
-pub async fn listen(port: u16, db_path: &Path) -> Result<(Endpoint, Connection), EngineError> {
+pub async fn listen(
+    port: u16,
+    db_path: &Path,
+) -> Result<(rfsync_network::Endpoint, rfsync_network::Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let (cert, key) = load_or_create_cert()?;
 
-    let code = generate_pairing_code();
+    let code = rfsync_network::generate_pairing_code();
     println!("code: {code}");
 
     let peer_cert = rfsync_network::listen_pairing(bind_addr, &code, &cert).await?;
