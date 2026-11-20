@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "apps/cli",
+    "apps/daemon",
     "crates/engine",
     "crates/fs",
     "crates/network",
