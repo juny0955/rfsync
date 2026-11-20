@@ -3,6 +3,9 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rfsync_engine::error::EngineError;
+use rfsync_storage::error::StorageError;
+
 #[test]
 fn registers_canonical_root_path_with_initial_snapshot_and_returns_id() -> Result<(), Box<dyn Error>>
 {
@@ -46,14 +49,14 @@ fn rejects_already_registered_canonical_path() -> Result<(), Box<dyn Error>> {
     let root = test_dir.join("root");
     let db_path = test_dir.join("test.db");
     fs::create_dir(&root)?;
-    let expected = root.canonicalize()?;
     rfsync_engine::register_root(&root, &db_path)?;
 
     let result = rfsync_engine::register_root(&root.join("."), &db_path);
 
-    assert!(
-        matches!(result, Err(rfsync_engine::error::EngineError::RootAlreadyExists(path)) if path == expected)
-    );
+    assert!(matches!(
+        result,
+        Err(EngineError::Storage(StorageError::RootAlreadyExists))
+    ));
     fs::remove_dir_all(test_dir)?;
     Ok(())
 }
@@ -76,9 +79,7 @@ fn rejects_root_with_non_utf8_path() -> Result<(), Box<dyn Error>> {
 
     let result = rfsync_engine::register_root(&root, &test_dir.join("test.db"));
 
-    assert!(
-        matches!(result, Err(rfsync_engine::error::EngineError::InvalidRootPath(path)) if path == expected)
-    );
+    assert!(matches!(result, Err(EngineError::InvalidRootPath(path)) if path == expected));
     fs::remove_dir_all(test_dir)?;
     Ok(())
 }

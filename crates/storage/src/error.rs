@@ -5,6 +5,9 @@ pub enum StorageError {
     #[error("SQLite 오류: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    #[error("이미 등록된 root 경로입니다.")]
+    RootAlreadyExists,
+
     #[error("스키마 버전이 없지만 비어있지 않은 DB입니다.")]
     UnversionedDatabase,
 

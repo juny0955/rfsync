@@ -7,9 +7,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
-    #[error("이미 등록된 root path 입니다: {}", .0.display())]
-    RootAlreadyExists(PathBuf),
-
     #[error("root 경로를 UTF-8 문자열로 표현할 수 없습니다: {}", .0.display())]
     InvalidRootPath(PathBuf),
 
