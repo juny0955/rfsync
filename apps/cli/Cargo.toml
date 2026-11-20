@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rfsync-engine = { path = "../../crates/engine" }
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [dev-dependencies]
 rfsync-storage = { path = "../../crates/storage" }

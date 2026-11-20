@@ -1,77 +1,94 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use quinn::{
-    Connection, Endpoint,
+    ClientConfig, Connection, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     rustls::{
         self, RootCertStore,
-        pki_types::{CertificateDer, PrivateKeyDer},
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
         server::WebPkiClientVerifier,
     },
 };
 
 use crate::NetworkError;
 
-pub async fn connect(
-    addr: SocketAddr,
-    my_cert: CertificateDer<'static>,
-    my_key: PrivateKeyDer<'static>,
-    peer_cert: CertificateDer<'static>,
-) -> Result<(Endpoint, Connection), NetworkError> {
-    let mut roots = RootCertStore::empty();
-    roots.add(peer_cert)?;
-    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
+pub fn bind_quic(addr: SocketAddr, config: ServerConfig) -> Result<Endpoint, NetworkError> {
+    Ok(Endpoint::server(config, addr)?)
+}
 
-    let tls = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(verifier)
-        .with_single_cert(vec![my_cert], my_key)?;
-    let config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
-
-    let endpoint = Endpoint::server(config, addr)?;
+pub async fn accept_quic(endpoint: &Endpoint) -> Result<Connection, NetworkError> {
     let incoming = endpoint
         .accept()
         .await
         .ok_or(NetworkError::QuicEndpointClosed)?;
-    let connection = incoming.await?;
-
-    Ok((endpoint, connection))
+    Ok(incoming.await?)
 }
 
-pub async fn accept(
-    addr: SocketAddr,
-    server_addr: SocketAddr,
+pub async fn connect_quic(
+    endpoint: &Endpoint,
+    peer_addr: SocketAddr,
     server_name: &str,
-    my_cert: CertificateDer<'static>,
-    my_key: PrivateKeyDer<'static>,
-    peer_cert: CertificateDer<'static>,
-) -> Result<(Endpoint, Connection), NetworkError> {
+    config: ClientConfig,
+) -> Result<Connection, NetworkError> {
+    Ok(endpoint
+        .connect_with(config, peer_addr, server_name)?
+        .await?)
+}
+
+pub fn server_config(
+    my_cert: &[u8],
+    my_key: &[u8],
+    trusted_peer_certs: &[&[u8]],
+) -> Result<quinn::ServerConfig, NetworkError> {
     let mut roots = RootCertStore::empty();
-    roots.add(peer_cert)?;
+    for &peer_cert in trusted_peer_certs {
+        roots.add(CertificateDer::from_slice(peer_cert))?;
+    }
+
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
+    let cert = CertificateDer::from(my_cert.to_vec());
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(my_key.to_vec()));
+
+    let tls = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(vec![cert], key)?;
+
+    Ok(quinn::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(tls)?,
+    )))
+}
+
+pub fn client_config(
+    my_cert: &[u8],
+    my_key: &[u8],
+    peer_cert: &[u8],
+) -> Result<quinn::ClientConfig, NetworkError> {
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from_slice(peer_cert))?;
+
+    let cert = CertificateDer::from(my_cert.to_vec());
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(my_key.to_vec()));
 
     let tls = rustls::ClientConfig::builder()
         .with_root_certificates(roots)
-        .with_client_auth_cert(vec![my_cert], my_key)?;
-    let config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
+        .with_client_auth_cert(vec![cert], key)?;
 
-    let endpoint = Endpoint::client(addr)?;
-    let connection = endpoint
-        .connect_with(config, server_addr, server_name)?
-        .await?;
-
-    Ok((endpoint, connection))
+    Ok(quinn::ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(tls)?,
+    )))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, net::UdpSocket};
+    use std::error::Error;
 
-    use quinn::{
-        ConnectionError, TransportErrorCode,
-        rustls::{AlertDescription, pki_types::PrivatePkcs8KeyDer},
-    };
+    use quinn::{ConnectionError, TransportErrorCode, rustls::AlertDescription};
     use tokio::time::{Duration, timeout};
 
-    use super::{Connection, Endpoint, NetworkError, SocketAddr, accept, connect};
+    use super::{
+        Connection, Endpoint, NetworkError, SocketAddr, accept_quic, bind_quic, client_config,
+        connect_quic, server_config,
+    };
     use crate::cert::generate_certificate;
 
     const LOOPBACK: SocketAddr =
@@ -80,46 +97,38 @@ mod tests {
     const CLIENT_NAME: &str = "client.local";
     const TIMEOUT: Duration = Duration::from_secs(5);
 
-    type Handshake = Result<(Endpoint, Connection), NetworkError>;
+    type Handshake = (Endpoint, Result<Connection, NetworkError>);
 
     async fn handshake(
         (client_cert, client_key): (Vec<u8>, Vec<u8>),
         trusted_client_cert: Vec<u8>,
     ) -> Result<(Handshake, Handshake), Box<dyn Error>> {
         let (server_cert, server_key) = generate_certificate(SERVER_NAME)?;
-        // Release the OS-assigned port so the server API can bind it itself.
-        let server_addr = UdpSocket::bind(LOOPBACK)?.local_addr()?;
+        let server = bind_quic(
+            LOOPBACK,
+            server_config(&server_cert, &server_key, &[&trusted_client_cert])?,
+        )?;
+        let client = bind_quic(
+            LOOPBACK,
+            server_config(&client_cert, &client_key, &[&server_cert])?,
+        )?;
+        let server_addr = server.local_addr()?;
+        let config = client_config(&client_cert, &client_key, &server_cert)?;
 
-        Ok(timeout(TIMEOUT, async {
+        let (accepted, connected) = timeout(TIMEOUT, async {
             tokio::join!(
-                biased;
-                connect(
-                    server_addr,
-                    server_cert.clone().into(),
-                    PrivatePkcs8KeyDer::from(server_key).into(),
-                    trusted_client_cert.into(),
-                ),
-                accept(
-                    LOOPBACK,
-                    server_addr,
-                    SERVER_NAME,
-                    client_cert.into(),
-                    PrivatePkcs8KeyDer::from(client_key).into(),
-                    server_cert.into(),
-                ),
+                accept_quic(&server),
+                connect_quic(&client, server_addr, SERVER_NAME, config),
             )
         })
-        .await?)
+        .await?;
+        Ok(((server, accepted), (client, connected)))
     }
 
-    #[tokio::test]
-    async fn paired_peers_exchange_data_over_quic() -> Result<(), Box<dyn Error>> {
-        let client_identity = generate_certificate(CLIENT_NAME)?;
-        let trusted_client = client_identity.0.clone();
-        let (server, client) = handshake(client_identity, trusted_client).await?;
-        let (_server_endpoint, server) = server?;
-        let (_client_endpoint, client) = client?;
-
+    async fn exchange_ping_pong(
+        server: Connection,
+        client: Connection,
+    ) -> Result<(), Box<dyn Error>> {
         timeout(TIMEOUT, async {
             let server = async {
                 let (mut send, mut recv) = server.accept_bi().await?;
@@ -142,10 +151,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paired_peers_exchange_data_over_quic() -> Result<(), Box<dyn Error>> {
+        let client_identity = generate_certificate(CLIENT_NAME)?;
+        let trusted_client = client_identity.0.clone();
+        let ((_server_endpoint, server), (_client_endpoint, client)) =
+            handshake(client_identity, trusted_client).await?;
+
+        exchange_ping_pong(server?, client?).await
+    }
+
+    #[tokio::test]
+    async fn same_endpoint_accepts_new_peer_while_connected_to_first_peer()
+    -> Result<(), Box<dyn Error>> {
+        let (a_cert, a_key) = generate_certificate("a.local")?;
+        let (b_cert, b_key) = generate_certificate("b.local")?;
+        let (c_cert, c_key) = generate_certificate("c.local")?;
+
+        let a = bind_quic(LOOPBACK, server_config(&a_cert, &a_key, &[&b_cert])?)?;
+        let b = bind_quic(LOOPBACK, server_config(&b_cert, &b_key, &[&a_cert])?)?;
+        let c = bind_quic(LOOPBACK, server_config(&c_cert, &c_key, &[&b_cert])?)?;
+        let b_addr = b.local_addr()?;
+
+        let to_a = client_config(&b_cert, &b_key, &a_cert)?;
+        let (a_to_b, b_to_a) = timeout(TIMEOUT, async {
+            tokio::try_join!(
+                accept_quic(&a),
+                connect_quic(&b, a.local_addr()?, "a.local", to_a)
+            )
+        })
+        .await??;
+
+        b.set_server_config(Some(server_config(&b_cert, &b_key, &[&a_cert, &c_cert])?));
+        let to_b = client_config(&c_cert, &c_key, &b_cert)?;
+        let (b_to_c, c_to_b) = timeout(TIMEOUT, async {
+            tokio::try_join!(accept_quic(&b), connect_quic(&c, b_addr, "b.local", to_b))
+        })
+        .await??;
+
+        assert_eq!(a_to_b.remote_address(), b_addr);
+        assert_eq!(c_to_b.remote_address(), b_addr);
+        tokio::try_join!(
+            exchange_ping_pong(a_to_b, b_to_a),
+            exchange_ping_pong(b_to_c, c_to_b),
+        )?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn server_rejects_unpaired_client_certificate() -> Result<(), Box<dyn Error>> {
         let (trusted_client, _) = generate_certificate(CLIENT_NAME)?;
         let unpaired_client = generate_certificate(CLIENT_NAME)?;
-        let (server, _client) = handshake(unpaired_client, trusted_client).await?;
+        let ((_server_endpoint, server), _client) =
+            handshake(unpaired_client, trusted_client).await?;
 
         let error = server.expect_err("accepted a client with an unpaired key");
         assert!(

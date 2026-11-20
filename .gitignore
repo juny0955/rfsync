@@ -2,3 +2,5 @@ target/
 .idea
 example.db
 .omo
+iden/
+.iden-*/
