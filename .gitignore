@@ -4,3 +4,4 @@ example.db
 .omo
 iden/
 .iden-*/
+.DS_Store
