@@ -1,4 +1,8 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use rfsync_network::generate_pairing_code;
 
@@ -7,7 +11,7 @@ use crate::error::EngineError;
 const SERVER_NAME: &str = "rfsync";
 pub const DEFAULT_PORT: u16 = 10_000;
 
-pub async fn listen(port: u16) -> Result<(), EngineError> {
+pub async fn listen(port: u16, db_path: &Path) -> Result<(), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let (cert, key) = load_or_create_cert()?;
 
@@ -20,11 +24,17 @@ pub async fn listen(port: u16) -> Result<(), EngineError> {
     let config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, config)?;
     let _connection = rfsync_network::accept_quic(&endpoint).await?;
+    save_device(db_path, &peer_cert, None)?;
     println!("A: QUIC 연결 성공");
     Ok(())
 }
 
-pub async fn connect(port: u16, server_addr: SocketAddr, code: &str) -> Result<(), EngineError> {
+pub async fn connect(
+    port: u16,
+    server_addr: SocketAddr,
+    code: &str,
+    db_path: &Path,
+) -> Result<(), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let (cert, key) = load_or_create_cert()?;
     let peer_cert = rfsync_network::connect_pairing(server_addr, code, &cert).await?;
@@ -35,7 +45,20 @@ pub async fn connect(port: u16, server_addr: SocketAddr, code: &str) -> Result<(
     let client_config = rfsync_network::client_config(&cert, &key, &peer_cert)?;
     let _connection =
         rfsync_network::connect_quic(&endpoint, server_addr, SERVER_NAME, client_config).await?;
+    save_device(db_path, &peer_cert, Some(server_addr))?;
     println!("B: QUIC 연결 성공");
+    Ok(())
+}
+
+fn save_device(
+    db_path: &Path,
+    cert_der: &[u8],
+    endpoint: Option<SocketAddr>,
+) -> Result<(), EngineError> {
+    let paired_at = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())?;
+    let endpoint = endpoint.map(|addr| addr.to_string());
+    let conn = rfsync_storage::open(db_path)?;
+    rfsync_storage::upsert_device(&conn, cert_der, endpoint.as_deref(), paired_at)?;
     Ok(())
 }
 
@@ -73,8 +96,10 @@ mod tests {
 
     use super::{EngineError, connect, listen};
 
+    const DB_PATH: &str = "pairing.db";
+
     #[tokio::test]
-    async fn pairs_on_separate_ports_and_reuses_each_identity() -> Result<(), Box<dyn Error>> {
+    async fn pairs_on_separate_ports_and_stores_each_remote_device() -> Result<(), Box<dyn Error>> {
         let listener_dir = tempfile::tempdir()?;
         let dialer_dir = tempfile::tempdir()?;
 
@@ -83,14 +108,36 @@ mod tests {
         let dialer_identity = identity_from(dialer_dir.path())?;
         assert!(listener_identity.0 != dialer_identity.0);
 
-        pair(listener_dir.path(), dialer_dir.path()).await?;
+        let server_addr = pair(listener_dir.path(), dialer_dir.path()).await?;
 
         assert!(identity_from(listener_dir.path())? == listener_identity);
         assert!(identity_from(dialer_dir.path())? == dialer_identity);
+
+        for (dir, peer_cert, endpoint) in [
+            (listener_dir.path(), dialer_identity.0, None),
+            (
+                dialer_dir.path(),
+                listener_identity.0,
+                Some(server_addr.to_string()),
+            ),
+        ] {
+            let conn = rfsync_storage::open(&dir.join(DB_PATH))?;
+            let count: i64 =
+                conn.query_row("SELECT count(*) FROM devices", [], |row| row.get(0))?;
+            assert_eq!(count, 1);
+            let stored: (Vec<u8>, Option<String>, i64) = conn.query_row(
+                "SELECT cert_der, endpoint, paired_at FROM devices",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(stored.0, peer_cert);
+            assert_eq!(stored.1, endpoint);
+            assert!(stored.2 > 0);
+        }
         Ok(())
     }
 
-    async fn pair(listener_dir: &Path, dialer_dir: &Path) -> Result<(), Box<dyn Error>> {
+    async fn pair(listener_dir: &Path, dialer_dir: &Path) -> Result<SocketAddr, Box<dyn Error>> {
         let tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let server_addr = tcp.local_addr()?;
         let server_udp = UdpSocket::bind(server_addr)?;
@@ -126,7 +173,7 @@ mod tests {
                 String::from_utf8_lossy(&client.stdout),
                 String::from_utf8_lossy(&client.stderr),
             );
-            Ok::<(), Box<dyn Error>>(())
+            Ok::<SocketAddr, Box<dyn Error>>(server_addr)
         })
         .await?
     }
@@ -162,11 +209,12 @@ mod tests {
             return Ok(());
         };
         let port = port.parse()?;
+        let db_path = Path::new(DB_PATH);
         if let Ok(addr) = env::var("RFSYNC_TEST_PEER_ADDR") {
             let addr: SocketAddr = addr.parse()?;
             let code = env::var("RFSYNC_TEST_PAIR_CODE")?;
             loop {
-                match connect(port, addr, &code).await {
+                match connect(port, addr, &code, db_path).await {
                     Err(EngineError::Network(NetworkError::Io(error)))
                         if error.kind() == io::ErrorKind::ConnectionRefused =>
                     {
@@ -177,6 +225,6 @@ mod tests {
                 }
             }
         }
-        Ok(listen(port).await?)
+        Ok(listen(port, db_path).await?)
     }
 }

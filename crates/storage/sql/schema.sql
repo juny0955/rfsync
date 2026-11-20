@@ -28,3 +28,11 @@ CREATE TABLE files (
 
     UNIQUE (folder_id, name)
 ) STRICT;
+
+CREATE TABLE devices (
+    id              INTEGER PRIMARY KEY,
+    cert_der        BLOB NOT NULL UNIQUE,
+    name            TEXT,
+    endpoint        TEXT,
+    paired_at       INTEGER NOT NULL
+) STRICT;
