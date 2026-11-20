@@ -67,12 +67,7 @@ pub fn get_root_by_path(conn: &Connection, local_path: &str) -> Result<Option<Ro
 
 pub fn mark_root_has_snapshot(conn: &Connection, root_id: i64) -> Result<bool, StorageError> {
     let updated = conn.execute("UPDATE roots SET has_snapshot = 1 WHERE id = ?1", [root_id])?;
-
-    if updated == 0 {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(updated != 0)
 }
 
 #[cfg(test)]
