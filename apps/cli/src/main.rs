@@ -64,12 +64,14 @@ async fn main() -> ExitCode {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }
+            println!("페어링 성공");
         }
         Command::PairConnect { addr, code, port } => {
             if let Err(error) = rfsync_engine::connect(port, addr, &code).await {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }
+            println!("페어링 성공");
         }
     }
 
