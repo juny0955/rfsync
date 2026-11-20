@@ -245,6 +245,7 @@ dependencies = [
  "clap",
  "rfsync-engine",
  "rfsync-storage",
+ "tokio",
 ]
 
 [[package]]
