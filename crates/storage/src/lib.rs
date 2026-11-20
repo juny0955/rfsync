@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::TransactionBehavior;
 
 use crate::error::StorageError;
 
@@ -14,6 +14,8 @@ pub use devices::upsert_device;
 pub use file::*;
 pub use folder::*;
 pub use root::*;
+
+pub use rusqlite::{Connection, Transaction};
 
 pub fn open(path: &Path) -> Result<Connection, StorageError> {
     let mut conn = Connection::open(path)?;

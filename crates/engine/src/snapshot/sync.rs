@@ -5,7 +5,6 @@ use std::{
 
 use rfsync_fs::FsEntry;
 use rfsync_storage::Folder;
-use rusqlite::Transaction;
 
 use crate::error::EngineError;
 
@@ -15,7 +14,7 @@ use super::{
 };
 
 pub fn sync_directory(
-    tx: &Transaction<'_>,
+    tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     root_path: &Path,
     target: &Path,
@@ -49,7 +48,7 @@ pub fn sync_directory(
 }
 
 pub fn sync_file(
-    tx: &Transaction<'_>,
+    tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     target: &Path,
     target_path: &str,
@@ -92,7 +91,7 @@ pub fn sync_file(
 }
 
 pub fn remove_path(
-    tx: &Transaction<'_>,
+    tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     target_path: &str,
 ) -> Result<(), EngineError> {
@@ -110,7 +109,7 @@ pub fn remove_path(
 }
 
 pub fn apply_diff(
-    tx: &Transaction<'_>,
+    tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     folders: &[Folder],
     diff: SnapshotDiff<'_>,
@@ -156,7 +155,7 @@ pub fn apply_diff(
 }
 
 fn remove_folder_tree(
-    tx: &Transaction<'_>,
+    tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     target_path: &str,
 ) -> Result<(), EngineError> {

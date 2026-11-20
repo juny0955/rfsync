@@ -1083,7 +1083,6 @@ dependencies = [
  "rfsync-fs",
  "rfsync-network",
  "rfsync-storage",
- "rusqlite",
  "tempfile",
  "thiserror",
  "tokio",
