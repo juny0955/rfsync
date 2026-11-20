@@ -1,10 +1,7 @@
 use std::{env, error::Error, io, net::SocketAddr, time::Duration};
 
-use quinn::{
-    ConnectionError,
-    rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-};
-use rfsync_network::{accept as connect_quic, connect_pairing, generate_certificate};
+use quinn::ConnectionError;
+use rfsync_network::{connect, connect_pairing, generate_certificate};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -17,15 +14,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::time::timeout(Duration::from_secs(10), async {
         let peer_cert = connect_pairing(server_addr, &code, &cert).await?;
-        let (_endpoint, connection) = connect_quic(
-            addr,
-            server_addr,
-            "test-server",
-            CertificateDer::from(cert),
-            PrivatePkcs8KeyDer::from(key).into(),
-            CertificateDer::from(peer_cert),
-        )
-        .await?;
+        let (_endpoint, connection) =
+            connect(addr, server_addr, "test-server", &cert, &key, &peer_cert).await?;
         let (mut send, mut recv) = connection.open_bi().await?;
         send.write_all(b"ping").await?;
         send.finish()?;

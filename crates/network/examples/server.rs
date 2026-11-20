@@ -1,9 +1,6 @@
 use std::{error::Error, io, net::SocketAddr, time::Duration};
 
-use quinn::rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use rfsync_network::{
-    connect as accept_quic, generate_certificate, generate_pairing_code, listen_pairing,
-};
+use rfsync_network::{accept, generate_certificate, generate_pairing_code, listen_pairing};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -17,13 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await??;
 
     tokio::time::timeout(Duration::from_secs(10), async {
-        let (endpoint, connection) = accept_quic(
-            addr,
-            CertificateDer::from(cert),
-            PrivatePkcs8KeyDer::from(key).into(),
-            CertificateDer::from(peer_cert),
-        )
-        .await?;
+        let (endpoint, connection) = accept(addr, &cert, &key, &peer_cert).await?;
         let (mut send, mut recv) = connection.accept_bi().await?;
         if recv.read_to_end(4).await? != b"ping" {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "expected ping").into());

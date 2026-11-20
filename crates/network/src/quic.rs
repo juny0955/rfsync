@@ -5,19 +5,23 @@ use quinn::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     rustls::{
         self, RootCertStore,
-        pki_types::{CertificateDer, PrivateKeyDer},
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
         server::WebPkiClientVerifier,
     },
 };
 
 use crate::NetworkError;
 
-pub async fn connect(
+pub async fn accept(
     addr: SocketAddr,
-    my_cert: CertificateDer<'static>,
-    my_key: PrivateKeyDer<'static>,
-    peer_cert: CertificateDer<'static>,
+    my_cert: &[u8],
+    my_key: &[u8],
+    peer_cert: &[u8],
 ) -> Result<(Endpoint, Connection), NetworkError> {
+    let my_cert = CertificateDer::from(my_cert.to_vec());
+    let my_key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(my_key.to_vec()));
+    let peer_cert = CertificateDer::from(peer_cert.to_vec());
+
     let mut roots = RootCertStore::empty();
     roots.add(peer_cert)?;
     let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
@@ -37,14 +41,18 @@ pub async fn connect(
     Ok((endpoint, connection))
 }
 
-pub async fn accept(
+pub async fn connect(
     addr: SocketAddr,
     server_addr: SocketAddr,
     server_name: &str,
-    my_cert: CertificateDer<'static>,
-    my_key: PrivateKeyDer<'static>,
-    peer_cert: CertificateDer<'static>,
+    my_cert: &[u8],
+    my_key: &[u8],
+    peer_cert: &[u8],
 ) -> Result<(Endpoint, Connection), NetworkError> {
+    let my_cert = CertificateDer::from(my_cert.to_vec());
+    let my_key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(my_key.to_vec()));
+    let peer_cert = CertificateDer::from(peer_cert.to_vec());
+
     let mut roots = RootCertStore::empty();
     roots.add(peer_cert)?;
 
@@ -65,10 +73,7 @@ pub async fn accept(
 mod tests {
     use std::{error::Error, net::UdpSocket};
 
-    use quinn::{
-        ConnectionError, TransportErrorCode,
-        rustls::{AlertDescription, pki_types::PrivatePkcs8KeyDer},
-    };
+    use quinn::{ConnectionError, TransportErrorCode, rustls::AlertDescription};
     use tokio::time::{Duration, timeout};
 
     use super::{Connection, Endpoint, NetworkError, SocketAddr, accept, connect};
@@ -93,19 +98,19 @@ mod tests {
         Ok(timeout(TIMEOUT, async {
             tokio::join!(
                 biased;
-                connect(
-                    server_addr,
-                    server_cert.clone().into(),
-                    PrivatePkcs8KeyDer::from(server_key).into(),
-                    trusted_client_cert.into(),
-                ),
                 accept(
+                    server_addr,
+                    &server_cert,
+                    &server_key,
+                    &trusted_client_cert,
+                ),
+                connect(
                     LOOPBACK,
                     server_addr,
                     SERVER_NAME,
-                    client_cert.into(),
-                    PrivatePkcs8KeyDer::from(client_key).into(),
-                    server_cert.into(),
+                    &client_cert,
+                    &client_key,
+                    &server_cert,
                 ),
             )
         })
