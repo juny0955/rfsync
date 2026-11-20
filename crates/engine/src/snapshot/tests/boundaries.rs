@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::sync_path_for_test;
-use crate::{create_initial_snapshot, error::EngineError, register_root, watch_path, watch_root};
+use crate::{error::EngineError, register_root, watch_path, watch_root};
 
 struct TestDir(PathBuf);
 
@@ -41,7 +41,6 @@ fn sync_path_converts_nested_file_to_folder() -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(root.join("docs"))?;
     fs::write(root.join("docs/item"), b"old")?;
     let root_id = register_root(&root, &db)?;
-    create_initial_snapshot(root_id, &db)?;
     fs::remove_file(root.join("docs/item"))?;
     fs::create_dir(root.join("docs/item"))?;
     fs::write(root.join("docs/item/child"), b"new")?;
@@ -66,7 +65,6 @@ fn deleting_nested_folder_preserves_similar_sibling() -> Result<(), Box<dyn Erro
     fs::write(root.join("docs/item/nested/file"), b"old")?;
     fs::write(root.join("docs/item-old/keep"), b"keep")?;
     let root_id = register_root(&root, &db)?;
-    create_initial_snapshot(root_id, &db)?;
     fs::remove_dir_all(root.join("docs/item"))?;
 
     sync_path_for_test(root_id, &db, Path::new("docs/item"))?;
@@ -92,8 +90,6 @@ fn sync_path_does_not_modify_other_root() -> Result<(), Box<dyn Error>> {
     }
     let first_id = register_root(&first, &db)?;
     let second_id = register_root(&second, &db)?;
-    create_initial_snapshot(first_id, &db)?;
-    create_initial_snapshot(second_id, &db)?;
     fs::remove_dir_all(first.join("docs"))?;
 
     sync_path_for_test(first_id, &db, Path::new("docs"))?;
@@ -114,7 +110,6 @@ fn repeated_folder_and_deleted_path_syncs_preserve_snapshot() -> Result<(), Box<
     fs::create_dir_all(root.join("docs"))?;
     fs::write(root.join("docs/file"), b"same")?;
     let root_id = register_root(&root, &db)?;
-    create_initial_snapshot(root_id, &db)?;
     let conn = rfsync_storage::open(&db)?;
     let before = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "file")?
         .ok_or("missing file")?;
@@ -138,7 +133,6 @@ fn missing_parent_folder_returns_error_without_changing_snapshot() -> Result<(),
     let db = dir.0.join("db");
     fs::create_dir(&root)?;
     let root_id = register_root(&root, &db)?;
-    create_initial_snapshot(root_id, &db)?;
     fs::create_dir(root.join("new"))?;
     fs::write(root.join("new/file"), b"data")?;
 
@@ -159,7 +153,6 @@ fn sync_path_saves_scanned_file_metadata() -> Result<(), Box<dyn Error>> {
     fs::create_dir(&root)?;
     fs::write(root.join("file"), b"original")?;
     let root_id = register_root(&root, &db)?;
-    create_initial_snapshot(root_id, &db)?;
     fs::write(root.join("file"), b"modified")?;
 
     sync_path_for_test(root_id, &db, Path::new("file"))?;
@@ -191,7 +184,6 @@ fn sync_rejects_missing_root_and_invalid_paths() -> Result<(), Box<dyn Error>> {
     let db = dir.0.join("db");
     fs::create_dir(&root)?;
     let root_id = register_root(&root, &db)?;
-    create_initial_snapshot(root_id, &db)?;
     assert!(matches!(
         watch_root(-1, &db),
         Err(EngineError::RootNotFound(-1))

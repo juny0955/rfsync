@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{sync_path_for_test, sync_root_for_test};
-use crate::{create_initial_snapshot, error::EngineError, register_root, watch_path, watch_root};
+use crate::{error::EngineError, snapshot::create_initial_snapshot, watch_path, watch_root};
 
 type Snapshot = (Vec<String>, Vec<(String, i64)>);
 
@@ -30,7 +30,11 @@ impl Fixture {
         let root = dir.join("root");
         let db = dir.join("snapshot.db");
         fs::create_dir_all(&root)?;
-        let root_id = register_root(&root, &db)?;
+        let conn = rfsync_storage::open(&db)?;
+        let root_id = rfsync_storage::insert_root(
+            &conn,
+            root.canonicalize()?.to_str().ok_or("non-UTF-8 test path")?,
+        )?;
         Ok(Self {
             dir,
             root,

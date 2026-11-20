@@ -4,7 +4,10 @@ use rfsync_fs::FsEvent;
 use rfsync_storage::Root;
 use rusqlite::Connection;
 
-use crate::{error::EngineError, sync_path, sync_root};
+use crate::{
+    error::EngineError,
+    snapshot::{sync_path, sync_root},
+};
 
 /// CLI 전용
 pub fn watch_path(local_path: &Path, db_path: &Path) -> Result<(), EngineError> {

@@ -1,11 +1,9 @@
-pub mod diff;
 pub mod error;
-mod pairing;
-mod root;
+pub mod pairing;
+pub mod root;
 mod snapshot;
-mod watcher;
+pub mod watcher;
 
 pub use pairing::*;
 pub use root::*;
-pub use snapshot::*;
 pub use watcher::*;

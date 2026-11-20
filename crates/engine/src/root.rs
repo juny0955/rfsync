@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::EngineError;
+use crate::{error::EngineError, snapshot::create_initial_snapshot};
 
 pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
     let conn = rfsync_storage::open(db_path)?;
@@ -15,5 +15,7 @@ pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
     }
 
     let root_id = rfsync_storage::insert_root(&conn, local_path)?;
+
+    create_initial_snapshot(root_id, db_path)?;
     Ok(root_id)
 }

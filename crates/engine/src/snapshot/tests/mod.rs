@@ -1,9 +1,14 @@
 use std::path::Path;
 
-use super::{portable_path, sync_path, sync_root};
-use crate::error::EngineError;
+use super::portable_path;
+use crate::{
+    error::EngineError,
+    snapshot::{sync_path, sync_root},
+};
 
 mod boundaries;
+mod diff;
+mod initial_snapshot;
 mod sync;
 
 fn sync_root_for_test(root_id: i64, db_path: &Path) -> Result<(), EngineError> {

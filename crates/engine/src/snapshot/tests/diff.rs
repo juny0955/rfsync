@@ -5,8 +5,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_engine::{diff::calc_diff, error::EngineError};
 use rfsync_fs::FsEntryKind;
+
+use crate::{error::EngineError, register_root};
+
+use super::super::diff::calc_diff;
 
 fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
     let path = std::env::temp_dir().join(format!(
@@ -25,8 +28,7 @@ fn reports_no_changes_after_initial_snapshot() -> Result<(), Box<dyn Error>> {
     let db = dir.join("snapshot.db");
     fs::create_dir_all(root.join("nested/empty"))?;
     fs::write(root.join("nested/file"), b"contents")?;
-    let root_id = rfsync_engine::register_root(&root, &db)?;
-    rfsync_engine::create_initial_snapshot(root_id, &db)?;
+    let root_id = register_root(&root, &db)?;
 
     let conn = rfsync_storage::open(&db)?;
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
@@ -54,8 +56,7 @@ fn reports_changes_and_excludes_files_in_removed_folders() -> Result<(), Box<dyn
     fs::write(root.join("modified"), b"old")?;
     fs::write(root.join("deleted"), b"old")?;
     fs::write(root.join("unchanged"), b"same")?;
-    let root_id = rfsync_engine::register_root(&root, &db)?;
-    rfsync_engine::create_initial_snapshot(root_id, &db)?;
+    let root_id = register_root(&root, &db)?;
     let conn = rfsync_storage::open(&db)?;
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
     let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;

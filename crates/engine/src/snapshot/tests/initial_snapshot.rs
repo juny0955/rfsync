@@ -1,9 +1,12 @@
-use rfsync_engine::error::EngineError;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::{error::EngineError, register_root};
+
+use super::super::create_initial_snapshot;
 
 fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -28,9 +31,7 @@ fn saves_files_empty_folders_and_ignores_symlinks() -> Result<(), Box<dyn Error>
     fs::write(root.join("photos/photo.txt"), b"photo")?;
     #[cfg(unix)]
     std::os::unix::fs::symlink(&root, root.join("link"))?;
-    let root_id = rfsync_engine::register_root(&root, &db_path)?;
-
-    rfsync_engine::create_initial_snapshot(root_id, &db_path)?;
+    let root_id = register_root(&root, &db_path)?;
 
     let conn = rfsync_storage::open(&db_path)?;
     let root_info = rfsync_storage::get_root(&conn, root_id)?.ok_or("missing root")?;
@@ -80,12 +81,11 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
     let db_path = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("first"), b"first")?;
-    let root_id = rfsync_engine::register_root(&root, &db_path)?;
-    rfsync_engine::create_initial_snapshot(root_id, &db_path)?;
+    let root_id = register_root(&root, &db_path)?;
     fs::write(root.join("second"), b"second")?;
 
-    let error = rfsync_engine::create_initial_snapshot(root_id, &db_path)
-        .expect_err("duplicate snapshot must fail");
+    let error =
+        create_initial_snapshot(root_id, &db_path).expect_err("duplicate snapshot must fail");
 
     assert!(matches!(error, EngineError::SnapshotAlreadyExists(id) if id == root_id));
     let conn = rfsync_storage::open(&db_path)?;
@@ -102,7 +102,7 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
 #[test]
 fn rejects_snapshot_for_missing_root() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
-    let result = rfsync_engine::create_initial_snapshot(42, &dir.join("snapshot.db"));
+    let result = create_initial_snapshot(42, &dir.join("snapshot.db"));
     assert!(matches!(result, Err(EngineError::RootNotFound(42))));
     fs::remove_dir_all(dir)?;
     Ok(())
@@ -116,22 +116,19 @@ fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn E
     let db_path = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("invalid\\name"), b"test")?;
-    let root_id = rfsync_engine::register_root(&root, &db_path)?;
-
-    let result = rfsync_engine::create_initial_snapshot(root_id, &db_path);
+    let result = register_root(&root, &db_path);
 
     assert!(
         matches!(result, Err(EngineError::InvalidEntryPath(path)) if path == std::path::Path::new("invalid\\name"))
     );
     let conn = rfsync_storage::open(&db_path)?;
-    assert!(
-        !rfsync_storage::get_root(&conn, root_id)?
-            .ok_or("missing root")?
-            .has_snapshot
-    );
+    let absolute_root = root.canonicalize()?;
+    let local_path = absolute_root.to_str().ok_or("non-UTF-8 test path")?;
+    let saved_root = rfsync_storage::get_root_by_path(&conn, local_path)?.ok_or("missing root")?;
+    assert!(!saved_root.has_snapshot);
     let folders: i64 = conn.query_row(
         "SELECT count(*) FROM folders WHERE root_id = ?1",
-        [root_id],
+        [saved_root.id],
         |row| row.get(0),
     )?;
     assert_eq!(folders, 0);

@@ -4,7 +4,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-fn registers_canonical_root_path_and_returns_id() -> Result<(), Box<dyn Error>> {
+fn registers_canonical_root_path_with_initial_snapshot_and_returns_id() -> Result<(), Box<dyn Error>>
+{
     let test_dir = std::env::temp_dir().join(format!(
         "rfsync-core-{}-{}",
         std::process::id(),
@@ -30,7 +31,7 @@ fn registers_canonical_root_path_and_returns_id() -> Result<(), Box<dyn Error>> 
     fs::remove_dir_all(test_dir)?;
     let (expected_path, saved_path, has_snapshot) = result?;
     assert_eq!(Path::new(&saved_path), expected_path);
-    assert_eq!(has_snapshot, 0);
+    assert_eq!(has_snapshot, 1);
     Ok(())
 }
 
