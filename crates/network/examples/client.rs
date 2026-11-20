@@ -1,7 +1,9 @@
 use std::{env, error::Error, io, net::SocketAddr, time::Duration};
 
 use quinn::ConnectionError;
-use rfsync_network::{connect, connect_pairing, generate_certificate};
+use rfsync_network::{
+    bind_quic, client_config, connect_pairing, connect_quic, generate_certificate, server_config,
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -14,8 +16,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::time::timeout(Duration::from_secs(10), async {
         let peer_cert = connect_pairing(server_addr, &code, &cert).await?;
-        let (_endpoint, connection) =
-            connect(addr, server_addr, "test-server", &cert, &key, &peer_cert).await?;
+        let endpoint = bind_quic(addr, server_config(&cert, &key, &[&peer_cert])?)?;
+        let config = client_config(&cert, &key, &peer_cert)?;
+        let connection = connect_quic(&endpoint, server_addr, "test-server", config).await?;
         let (mut send, mut recv) = connection.open_bi().await?;
         send.write_all(b"ping").await?;
         send.finish()?;

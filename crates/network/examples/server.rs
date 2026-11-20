@@ -1,6 +1,9 @@
 use std::{error::Error, io, net::SocketAddr, time::Duration};
 
-use rfsync_network::{accept, generate_certificate, generate_pairing_code, listen_pairing};
+use rfsync_network::{
+    accept_quic, bind_quic, generate_certificate, generate_pairing_code, listen_pairing,
+    server_config,
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -14,7 +17,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await??;
 
     tokio::time::timeout(Duration::from_secs(10), async {
-        let (endpoint, connection) = accept(addr, &cert, &key, &peer_cert).await?;
+        let endpoint = bind_quic(addr, server_config(&cert, &key, &[&peer_cert])?)?;
+        let connection = accept_quic(&endpoint).await?;
         let (mut send, mut recv) = connection.accept_bi().await?;
         if recv.read_to_end(4).await? != b"ping" {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "expected ping").into());
