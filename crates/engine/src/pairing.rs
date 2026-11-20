@@ -4,14 +4,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_network::generate_pairing_code;
+use rfsync_network::{Connection, Endpoint, generate_pairing_code};
 
 use crate::error::EngineError;
 
 const SERVER_NAME: &str = "rfsync";
 pub const DEFAULT_PORT: u16 = 10_000;
 
-pub async fn listen(port: u16, db_path: &Path) -> Result<(), EngineError> {
+pub async fn listen(port: u16, db_path: &Path) -> Result<(Endpoint, Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let (cert, key) = load_or_create_cert()?;
 
@@ -23,10 +23,10 @@ pub async fn listen(port: u16, db_path: &Path) -> Result<(), EngineError> {
 
     let config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, config)?;
-    let _connection = rfsync_network::accept_quic(&endpoint).await?;
+    let connection = rfsync_network::accept_quic(&endpoint).await?;
     save_device(db_path, &peer_cert, None)?;
     println!("A: QUIC 연결 성공");
-    Ok(())
+    Ok((endpoint, connection))
 }
 
 pub async fn connect(
@@ -34,7 +34,7 @@ pub async fn connect(
     server_addr: SocketAddr,
     code: &str,
     db_path: &Path,
-) -> Result<(), EngineError> {
+) -> Result<(Endpoint, Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let (cert, key) = load_or_create_cert()?;
     let peer_cert = rfsync_network::connect_pairing(server_addr, code, &cert).await?;
@@ -43,11 +43,11 @@ pub async fn connect(
     let server_config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, server_config)?;
     let client_config = rfsync_network::client_config(&cert, &key, &peer_cert)?;
-    let _connection =
+    let connection =
         rfsync_network::connect_quic(&endpoint, server_addr, SERVER_NAME, client_config).await?;
     save_device(db_path, &peer_cert, Some(server_addr))?;
     println!("B: QUIC 연결 성공");
-    Ok(())
+    Ok((endpoint, connection))
 }
 
 fn save_device(
@@ -221,10 +221,14 @@ mod tests {
                         // The listener prints its code just before binding TCP.
                         tokio::task::yield_now().await;
                     }
-                    result => return Ok(result?),
+                    result => {
+                        result?;
+                        return Ok(());
+                    }
                 }
             }
         }
-        Ok(listen(port, db_path).await?)
+        listen(port, db_path).await?;
+        Ok(())
     }
 }
