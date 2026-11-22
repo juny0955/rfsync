@@ -1,7 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use quinn::{
-    ClientConfig, Connection, Endpoint, ServerConfig,
+    ClientConfig, Connection, Endpoint, ServerConfig, TransportConfig, VarInt,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     rustls::{
         self, RootCertStore,
@@ -11,6 +11,10 @@ use quinn::{
 };
 
 use crate::NetworkError;
+
+/// 유휴 연결에 keep-alive 패킷을 보내는 주기. idle timeout보다 짧아야 효과가 있다.
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const MAX_IDLE_TIMEOUT_MS: u32 = 30_000;
 
 pub fn bind_quic(addr: SocketAddr, config: ServerConfig) -> Result<Endpoint, NetworkError> {
     Ok(Endpoint::server(config, addr)?)
@@ -40,6 +44,20 @@ pub fn server_config(
     my_key: &[u8],
     trusted_peer_certs: &[&[u8]],
 ) -> Result<quinn::ServerConfig, NetworkError> {
+    server_config_with(
+        my_cert,
+        my_key,
+        trusted_peer_certs,
+        default_transport_config(),
+    )
+}
+
+fn server_config_with(
+    my_cert: &[u8],
+    my_key: &[u8],
+    trusted_peer_certs: &[&[u8]],
+    transport: Arc<TransportConfig>,
+) -> Result<quinn::ServerConfig, NetworkError> {
     let mut roots = RootCertStore::empty();
     for &peer_cert in trusted_peer_certs {
         roots.add(CertificateDer::from_slice(peer_cert))?;
@@ -53,15 +71,24 @@ pub fn server_config(
         .with_client_cert_verifier(verifier)
         .with_single_cert(vec![cert], key)?;
 
-    Ok(quinn::ServerConfig::with_crypto(Arc::new(
-        QuicServerConfig::try_from(tls)?,
-    )))
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
+    config.transport_config(transport);
+    Ok(config)
 }
 
 pub fn client_config(
     my_cert: &[u8],
     my_key: &[u8],
     peer_cert: &[u8],
+) -> Result<quinn::ClientConfig, NetworkError> {
+    client_config_with(my_cert, my_key, peer_cert, default_transport_config())
+}
+
+fn client_config_with(
+    my_cert: &[u8],
+    my_key: &[u8],
+    peer_cert: &[u8],
+    transport: Arc<TransportConfig>,
 ) -> Result<quinn::ClientConfig, NetworkError> {
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from_slice(peer_cert))?;
@@ -73,9 +100,23 @@ pub fn client_config(
         .with_root_certificates(roots)
         .with_client_auth_cert(vec![cert], key)?;
 
-    Ok(quinn::ClientConfig::new(Arc::new(
-        QuicClientConfig::try_from(tls)?,
-    )))
+    let mut config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
+    config.transport_config(transport);
+    Ok(config)
+}
+
+fn transport_config(
+    keep_alive_interval: Duration,
+    max_idle_timeout_ms: u32,
+) -> Arc<TransportConfig> {
+    let mut transport = TransportConfig::default();
+    transport.keep_alive_interval(Some(keep_alive_interval));
+    transport.max_idle_timeout(Some(VarInt::from_u32(max_idle_timeout_ms).into()));
+    Arc::new(transport)
+}
+
+fn default_transport_config() -> Arc<TransportConfig> {
+    transport_config(KEEP_ALIVE_INTERVAL, MAX_IDLE_TIMEOUT_MS)
 }
 
 #[cfg(test)]
@@ -83,11 +124,12 @@ mod tests {
     use std::error::Error;
 
     use quinn::{ConnectionError, TransportErrorCode, rustls::AlertDescription};
-    use tokio::time::{Duration, timeout};
+    use tokio::time::{Duration, sleep, timeout};
 
     use super::{
-        Connection, Endpoint, NetworkError, SocketAddr, accept_quic, bind_quic, client_config,
-        connect_quic, server_config,
+        Arc, Connection, Endpoint, NetworkError, SocketAddr, TransportConfig, VarInt, accept_quic,
+        bind_quic, client_config, client_config_with, connect_quic, server_config,
+        server_config_with, transport_config,
     };
     use crate::cert::generate_certificate;
 
@@ -147,6 +189,61 @@ mod tests {
             tokio::try_join!(server, client)
         })
         .await??;
+        Ok(())
+    }
+
+    type Pair = (Endpoint, Connection, Endpoint, Connection);
+
+    async fn connected_pair_with(
+        transport: impl Fn() -> Arc<TransportConfig>,
+    ) -> Result<Pair, Box<dyn Error>> {
+        let (server_cert, server_key) = generate_certificate(SERVER_NAME)?;
+        let (client_cert, client_key) = generate_certificate(CLIENT_NAME)?;
+        let server = bind_quic(
+            LOOPBACK,
+            server_config_with(&server_cert, &server_key, &[&client_cert], transport())?,
+        )?;
+        let client = bind_quic(
+            LOOPBACK,
+            server_config_with(&client_cert, &client_key, &[&server_cert], transport())?,
+        )?;
+        let server_addr = server.local_addr()?;
+        let config = client_config_with(&client_cert, &client_key, &server_cert, transport())?;
+
+        let (accepted, connected) = timeout(TIMEOUT, async {
+            tokio::join!(
+                accept_quic(&server),
+                connect_quic(&client, server_addr, SERVER_NAME, config),
+            )
+        })
+        .await?;
+        Ok((server, accepted?, client, connected?))
+    }
+
+    #[tokio::test]
+    async fn keep_alive_holds_idle_connection_open() -> Result<(), Box<dyn Error>> {
+        let (_server_endpoint, server, _client_endpoint, client) =
+            connected_pair_with(|| transport_config(Duration::from_millis(200), 1_000)).await?;
+
+        sleep(Duration::from_millis(2_500)).await;
+
+        assert!(server.close_reason().is_none());
+        assert!(client.close_reason().is_none());
+        exchange_ping_pong(server, client).await
+    }
+
+    #[tokio::test]
+    async fn idle_connection_times_out_without_keep_alive() -> Result<(), Box<dyn Error>> {
+        let (_server_endpoint, _server, _client_endpoint, client) = connected_pair_with(|| {
+            let mut transport = TransportConfig::default();
+            transport.max_idle_timeout(Some(VarInt::from_u32(1_000).into()));
+            Arc::new(transport)
+        })
+        .await?;
+
+        let reason = timeout(TIMEOUT, client.closed()).await?;
+
+        assert!(matches!(reason, ConnectionError::TimedOut), "{reason}");
         Ok(())
     }
 
