@@ -10,7 +10,7 @@ mod file;
 mod folder;
 mod root;
 
-pub use devices::upsert_device;
+pub use devices::{Device, list_devices, upsert_device};
 pub use file::*;
 pub use folder::*;
 pub use root::*;
