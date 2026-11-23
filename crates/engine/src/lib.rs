@@ -1,5 +1,6 @@
 pub mod error;
 pub mod identity;
+mod index;
 pub mod pairing;
 pub mod root;
 pub mod session;
