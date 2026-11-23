@@ -1212,6 +1212,7 @@ dependencies = [
  "postcard",
  "serde",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
