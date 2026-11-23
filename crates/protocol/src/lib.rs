@@ -6,6 +6,8 @@ mod error;
 pub use codec::{read_frame, write_frame};
 pub use error::ProtocolError;
 
+pub const PROTOCOL_VERSION: u16 = 1;
+
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum Message {
     Hello { version: u16 },
