@@ -1,0 +1,15 @@
+services:
+  a:
+    build: { context: .., dockerfile: docker/Dockerfile }
+    volumes: [a-data:/data]
+    networks: { rfsync: { ipv4_address: 172.29.0.10 } }
+  b:
+    build: { context: .., dockerfile: docker/Dockerfile }
+    volumes: [b-data:/data]
+    networks: { rfsync: { ipv4_address: 172.29.0.11 } }
+
+volumes: { a-data: {}, b-data: {} }
+
+networks:
+  rfsync:
+    ipam: { config: [{ subnet: 172.29.0.0/24 }] }
