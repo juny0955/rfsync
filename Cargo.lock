@@ -1119,6 +1119,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rfsync-protocol"
+version = "0.1.0"
+
+[[package]]
 name = "rfsync-storage"
 version = "0.1.0"
 dependencies = [
