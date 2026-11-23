@@ -1,6 +1,6 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::{Message, decode, encode, error::ProtocolError};
+use crate::{Message, ProtocolError, decode, encode};
 
 const MAX_FRAME_SIZE: usize = 1024 * 1024; // 1 MiB
 
