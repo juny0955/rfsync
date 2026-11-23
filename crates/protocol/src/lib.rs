@@ -1,5 +1,24 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use serde::{Deserialize, Serialize};
+
+mod codec;
+mod error;
+
+pub use codec::{read_frame, write_frame};
+pub use error::ProtocolError;
+
+pub const PROTOCOL_VERSION: u16 = 1;
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub enum Message {
+    Hello { version: u16 },
+}
+
+pub fn encode(msg: &Message) -> Result<Vec<u8>, ProtocolError> {
+    Ok(postcard::to_stdvec(msg)?)
+}
+
+pub fn decode(bytes: &[u8]) -> Result<Message, ProtocolError> {
+    Ok(postcard::from_bytes(bytes)?)
 }
 
 #[cfg(test)]
@@ -7,8 +26,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn 메시지를_바이트로_바꿨다_되돌리면_같다() {
+        let msg = Message::Hello { version: 1 };
+        let bytes = encode(&msg).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), msg);
     }
 }
