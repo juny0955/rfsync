@@ -43,7 +43,9 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     // 로그는 프로그램의 출력(stdout)과 섞이지 않도록 stderr로 보낸다.
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     let cli = Cli::parse();
     let db_path = db_path();
 
@@ -62,7 +64,9 @@ async fn main() -> ExitCode {
             }
         }
         Command::PairListen { port } => {
-            if let Err(error) = rfsync_engine::listen(port, db_path).await {
+            if let Err(error) =
+                rfsync_engine::listen(port, db_path, |code| println!("code: {code}")).await
+            {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }

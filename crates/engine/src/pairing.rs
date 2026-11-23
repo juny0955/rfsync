@@ -12,15 +12,17 @@ use crate::{
     identity::{SERVER_NAME, load_or_create_identity},
 };
 
+/// 페어링을 기다린다. 코드를 만들면 `on_code`로 건네며, 사용자에게 보여주는 일은 호출하는 쪽이 한다.
 pub async fn listen(
     port: u16,
     db_path: &Path,
+    on_code: impl FnOnce(&str),
 ) -> Result<(rfsync_network::Endpoint, QuicConnection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let identity = load_or_create_identity()?;
 
     let code = rfsync_network::generate_pairing_code();
-    println!("code: {code}");
+    on_code(&code);
 
     let peer_cert = rfsync_network::listen_pairing(bind_addr, &code, &identity.cert).await?;
     info!("A: 상대 키 확인 성공");
@@ -220,7 +222,8 @@ mod tests {
                 }
             }
         }
-        listen(port, db_path).await?;
+        // 부모 테스트가 이 프로세스의 stdout에서 코드를 읽는다. CLI와 같은 형식으로 출력한다.
+        listen(port, db_path, |code| println!("code: {code}")).await?;
         Ok(())
     }
 }
