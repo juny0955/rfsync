@@ -8,9 +8,10 @@ name = "rfsync"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
 rfsync-engine = { path = "../../crates/engine" }
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 rfsync-storage = { path = "../../crates/storage" }

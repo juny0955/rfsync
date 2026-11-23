@@ -42,6 +42,8 @@ enum Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    // 로그는 프로그램의 출력(stdout)과 섞이지 않도록 stderr로 보낸다.
+    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
     let cli = Cli::parse();
     let db_path = db_path();
 
