@@ -2,6 +2,7 @@ use std::{io, num::TryFromIntError, path::PathBuf, time::SystemTimeError};
 
 use rfsync_fs::error::FsError;
 use rfsync_network::NetworkError;
+use rfsync_protocol::ProtocolError;
 use rfsync_storage::error::StorageError;
 use thiserror::Error;
 
@@ -48,6 +49,9 @@ pub enum EngineError {
 
     #[error("네트워크 오류: {0}")]
     Network(#[from] NetworkError),
+
+    #[error("프로토콜 오류: {0}")]
+    Protocol(#[from] ProtocolError),
 
     #[error("파일 시간 오류: {0}")]
     Time(#[from] SystemTimeError),
