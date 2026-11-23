@@ -3,9 +3,16 @@ use std::{
     path::Path,
 };
 
-use rfsync_network::{Endpoint, NetworkError};
+use rfsync_network::{ClientConfig, Endpoint, NetworkError};
+use tokio::{task::JoinSet, time::sleep};
 
-use crate::{error::EngineError, identity::Identity};
+use crate::{
+    error::EngineError,
+    identity::{Identity, SERVER_NAME},
+    session::backoff::Backoff,
+};
+
+mod backoff;
 
 pub async fn run(
     identity: &Identity,
@@ -28,14 +35,46 @@ pub async fn run(
 
     let endpoint = rfsync_network::bind_quic(addr, config)?;
 
+    let mut dials = JoinSet::new();
+    for device in &devices {
+        let Some(addr) = device.endpoint.as_deref() else {
+            continue;
+        };
+
+        let Ok(addr) = addr.parse::<SocketAddr>() else {
+            eprintln!("저장된 주소가 올바르지 않습니다: {addr}");
+            continue;
+        };
+
+        let config =
+            rfsync_network::client_config(&identity.cert, &identity.key, &device.cert_der)?;
+        dials.spawn(dial_loop(endpoint.clone(), addr, config));
+    }
+
     tokio::select! {
         _ = shutdown => {}
         _ = accept_loop(&endpoint) => {}
     }
     endpoint.close(0u32.into(), b"shutdown");
+    dials.shutdown().await;
     endpoint.wait_idle().await;
 
     Ok(())
+}
+
+async fn dial_loop(endpoint: Endpoint, addr: SocketAddr, config: ClientConfig) {
+    let mut backoff = Backoff::new();
+
+    loop {
+        match rfsync_network::connect_quic(&endpoint, addr, SERVER_NAME, config.clone()).await {
+            Ok(conn) => {
+                backoff.reset();
+                hold_connection(conn).await;
+            }
+            Err(e) => eprintln!("{addr} 연결 실패: {e}"),
+        }
+        sleep(backoff.next_delay()).await;
+    }
 }
 
 async fn accept_loop(endpoint: &Endpoint) {
@@ -139,6 +178,121 @@ mod tests {
             .await?;
             Ok((endpoint, conn))
         }
+
+        /// 상대 피어를 `addr`로 접속할 수 있는 기기로 DB에 저장한다.
+        fn pair_peer_at(&self, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
+            let conn = rfsync_storage::open(&self.db_path)?;
+            rfsync_storage::upsert_device(&conn, &self.peer.cert, Some(&addr.to_string()), 100)?;
+            Ok(())
+        }
+
+        /// 데몬이 접속해 올 서버 역할의 상대 피어를 띄운다. 신뢰하는 쪽은 데몬뿐이다.
+        fn bind_peer(&self, identity: &Identity) -> Result<Endpoint, NetworkError> {
+            rfsync_network::bind_quic(
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+                rfsync_network::server_config(&identity.cert, &identity.key, &[&self.daemon.cert])?,
+            )
+        }
+
+        /// 데몬을 띄우고 `scenario`가 끝나면 종료시킨 뒤 양쪽 결과를 확인한다.
+        async fn with_daemon<F, Fut>(&self, scenario: F) -> Result<(), Box<dyn Error>>
+        where
+            F: FnOnce() -> Fut,
+            Fut: Future<Output = Result<(), Box<dyn Error>>>,
+        {
+            let (stop, stopped) = oneshot::channel::<()>();
+            let scenario = async {
+                let result = scenario().await;
+                let _ = stop.send(());
+                result
+            };
+            let (daemon, scenario) = timeout(TIMEOUT, async {
+                tokio::join!(
+                    self.run(async {
+                        let _ = stopped.await;
+                    }),
+                    scenario
+                )
+            })
+            .await?;
+
+            daemon?;
+            scenario
+        }
+    }
+
+    /// 상대 피어가 데몬의 접속을 기다렸다가 받는다.
+    async fn accept_from_daemon(peer: &Endpoint) -> Result<Connection, Box<dyn Error>> {
+        Ok(timeout(TIMEOUT, rfsync_network::accept_quic(peer)).await??)
+    }
+
+    #[tokio::test]
+    async fn dials_the_stored_endpoint_of_a_paired_device() -> Result<(), Box<dyn Error>> {
+        let fixture = Fixture::new()?;
+        let peer = fixture.bind_peer(&fixture.peer)?;
+        fixture.pair_peer_at(peer.local_addr()?)?;
+
+        fixture
+            .with_daemon(|| async {
+                let conn = accept_from_daemon(&peer).await?;
+                // 데몬이 연결 핸들을 놓았다면 이 시간 안에 연결이 닫힌다.
+                sleep(Duration::from_millis(300)).await;
+                assert!(conn.close_reason().is_none());
+                Ok(())
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn dials_again_after_the_connection_is_closed() -> Result<(), Box<dyn Error>> {
+        let fixture = Fixture::new()?;
+        let peer = fixture.bind_peer(&fixture.peer)?;
+        fixture.pair_peer_at(peer.local_addr()?)?;
+
+        fixture
+            .with_daemon(|| async {
+                let first = accept_from_daemon(&peer).await?;
+                first.close(0u32.into(), b"test");
+
+                // 첫 대기 시간(1초) 뒤에 데몬이 다시 접속해 와야 한다.
+                let second = accept_from_daemon(&peer).await?;
+                sleep(Duration::from_millis(300)).await;
+                assert!(second.close_reason().is_none());
+                Ok(())
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn retries_after_a_failed_attempt() -> Result<(), Box<dyn Error>> {
+        let fixture = Fixture::new()?;
+        // 저장된 인증서와 다른 신원으로 응답하는 피어라서 첫 접속은 인증서 검증에 실패한다.
+        let peer = fixture.bind_peer(&new_identity()?)?;
+        fixture.pair_peer_at(peer.local_addr()?)?;
+
+        fixture
+            .with_daemon(|| async {
+                let mut rejected = 0;
+                let conn = loop {
+                    match timeout(TIMEOUT, rfsync_network::accept_quic(&peer)).await? {
+                        Ok(conn) => break conn,
+                        Err(_) => {
+                            rejected += 1;
+                            // 이제 올바른 신원으로 응답해서 다음 재시도가 성공하게 한다.
+                            peer.set_server_config(Some(rfsync_network::server_config(
+                                &fixture.peer.cert,
+                                &fixture.peer.key,
+                                &[&fixture.daemon.cert],
+                            )?));
+                        }
+                    }
+                };
+
+                assert!(rejected >= 1, "첫 접속이 실패하지 않았다");
+                assert!(conn.close_reason().is_none());
+                Ok(())
+            })
+            .await
     }
 
     #[tokio::test]
