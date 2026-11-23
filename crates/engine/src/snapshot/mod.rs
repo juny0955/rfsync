@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rfsync_storage::{Root, error::StorageError};
+use rfsync_storage::{DbConnection, Root, error::StorageError};
 
 use crate::{
     error::EngineError,
@@ -67,7 +67,7 @@ pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), Engin
 /// 3. 폴더 추가
 /// 4. 파일 추가
 /// 5. 파일 수정
-pub fn sync_root(conn: &mut rfsync_storage::Connection, root: &Root) -> Result<(), EngineError> {
+pub fn sync_root(conn: &mut DbConnection, root: &Root) -> Result<(), EngineError> {
     let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
     // === START TRANSACTION ===
@@ -83,11 +83,7 @@ pub fn sync_root(conn: &mut rfsync_storage::Connection, root: &Root) -> Result<(
     Ok(())
 }
 
-pub fn sync_path(
-    conn: &mut rfsync_storage::Connection,
-    root: &Root,
-    target: &Path,
-) -> Result<(), EngineError> {
+pub fn sync_path(conn: &mut DbConnection, root: &Root, target: &Path) -> Result<(), EngineError> {
     let root_path = Path::new(&root.local_path);
     let entry = rfsync_fs::scan_path(root_path, target)?;
 

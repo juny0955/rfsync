@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use rfsync_network::{ClientConfig, Endpoint, NetworkError};
+use rfsync_network::{ClientConfig, Endpoint, NetworkError, QuicConnection};
 use rfsync_protocol::{Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{task::JoinSet, time::sleep};
 
@@ -90,7 +90,7 @@ async fn accept_loop(endpoint: &Endpoint) {
     }
 }
 
-async fn hold_connection(conn: rfsync_network::Connection) {
+async fn hold_connection(conn: QuicConnection) {
     if let Err(e) = send_hello(&conn).await {
         eprintln!("Hello 전송 실패: {e}");
     }
@@ -104,7 +104,7 @@ async fn hold_connection(conn: rfsync_network::Connection) {
     eprintln!("연결 종료: {reason}");
 }
 
-async fn send_hello(conn: &rfsync_network::Connection) -> Result<(), EngineError> {
+async fn send_hello(conn: &QuicConnection) -> Result<(), EngineError> {
     let mut send = conn.open_uni().await.map_err(NetworkError::from)?;
 
     write_frame(
@@ -118,7 +118,7 @@ async fn send_hello(conn: &rfsync_network::Connection) -> Result<(), EngineError
     Ok(())
 }
 
-async fn recv_hello(conn: &rfsync_network::Connection) -> Result<Message, EngineError> {
+async fn recv_hello(conn: &QuicConnection) -> Result<Message, EngineError> {
     let mut recv = conn.accept_uni().await.map_err(NetworkError::from)?;
 
     let msg = read_frame(&mut recv).await?;

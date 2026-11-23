@@ -1,7 +1,7 @@
 use std::{path::Path, sync::mpsc};
 
 use rfsync_fs::FsEvent;
-use rfsync_storage::Root;
+use rfsync_storage::{DbConnection, Root};
 
 use crate::{
     error::EngineError,
@@ -30,7 +30,7 @@ pub fn watch_root(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     watch(conn, root)
 }
 
-fn watch(mut conn: rfsync_storage::Connection, root: Root) -> Result<(), EngineError> {
+fn watch(mut conn: DbConnection, root: Root) -> Result<(), EngineError> {
     if !root.has_snapshot {
         return Err(EngineError::NotInitializedRoot(root.id));
     }

@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use rfsync_network::{Connection, Endpoint, generate_certificate};
+use rfsync_network::{Endpoint, QuicConnection, generate_certificate};
 use tokio::{
     sync::oneshot,
     time::{sleep, timeout},
@@ -61,7 +61,10 @@ impl Fixture {
     }
 
     /// 주어진 신원으로 데몬에 접속한다. 엔드포인트도 연결이 살아 있는 동안 유지해야 한다.
-    async fn connect(&self, identity: &Identity) -> Result<(Endpoint, Connection), NetworkError> {
+    async fn connect(
+        &self,
+        identity: &Identity,
+    ) -> Result<(Endpoint, QuicConnection), NetworkError> {
         let endpoint = rfsync_network::bind_quic(
             SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             rfsync_network::server_config(&identity.cert, &identity.key, &[&self.daemon.cert])?,
@@ -121,7 +124,7 @@ impl Fixture {
 }
 
 /// 상대 피어가 데몬의 접속을 기다렸다가 받는다.
-async fn accept_from_daemon(peer: &Endpoint) -> Result<Connection, Box<dyn Error>> {
+async fn accept_from_daemon(peer: &Endpoint) -> Result<QuicConnection, Box<dyn Error>> {
     Ok(timeout(TIMEOUT, rfsync_network::accept_quic(peer)).await??)
 }
 
@@ -303,7 +306,7 @@ fn hello() -> Message {
 }
 
 /// 상대가 연 uni 스트림에서 첫 메시지를 읽는다.
-async fn read_hello(conn: &Connection) -> Result<Message, Box<dyn Error>> {
+async fn read_hello(conn: &QuicConnection) -> Result<Message, Box<dyn Error>> {
     let mut recv = timeout(TIMEOUT, conn.accept_uni()).await??;
     Ok(timeout(TIMEOUT, read_frame(&mut recv)).await??)
 }

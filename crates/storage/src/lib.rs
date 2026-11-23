@@ -15,10 +15,10 @@ pub use file::*;
 pub use folder::*;
 pub use root::*;
 
-pub use rusqlite::{Connection, Transaction};
+pub use rusqlite::{Connection as DbConnection, Transaction};
 
-pub fn open(path: &Path) -> Result<Connection, StorageError> {
-    let mut conn = Connection::open(path)?;
+pub fn open(path: &Path) -> Result<DbConnection, StorageError> {
+    let mut conn = DbConnection::open(path)?;
 
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     initialize_schema(&mut conn)?;
@@ -26,7 +26,7 @@ pub fn open(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-fn initialize_schema(conn: &mut Connection) -> Result<(), StorageError> {
+fn initialize_schema(conn: &mut DbConnection) -> Result<(), StorageError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
     let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn rejects_unversioned_database_with_existing_tables() -> Result<(), Box<dyn Error>> {
-        let mut conn = Connection::open_in_memory()?;
+        let mut conn = DbConnection::open_in_memory()?;
         conn.execute_batch(
             "CREATE TABLE existing (value TEXT); INSERT INTO existing VALUES ('keep');",
         )?;
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_schema_version() -> Result<(), Box<dyn Error>> {
-        let mut conn = Connection::open_in_memory()?;
+        let mut conn = DbConnection::open_in_memory()?;
         conn.execute_batch("PRAGMA user_version = 2;")?;
 
         assert!(matches!(

@@ -8,4 +8,4 @@ pub use error::*;
 pub use pairing::*;
 pub use quic::*;
 
-pub use quinn::{ClientConfig, Connection, Endpoint};
+pub use quinn::{ClientConfig, Connection as QuicConnection, Endpoint};

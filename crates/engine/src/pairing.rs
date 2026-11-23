@@ -4,7 +4,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_network::{Connection, Endpoint};
+use rfsync_network::{Endpoint, QuicConnection};
 
 use crate::{
     error::EngineError,
@@ -16,7 +16,7 @@ pub const DEFAULT_PORT: u16 = 10_000;
 pub async fn listen(
     port: u16,
     db_path: &Path,
-) -> Result<(rfsync_network::Endpoint, rfsync_network::Connection), EngineError> {
+) -> Result<(rfsync_network::Endpoint, QuicConnection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let identity = load_or_create_identity()?;
 
@@ -39,7 +39,7 @@ pub async fn connect(
     server_addr: SocketAddr,
     code: &str,
     db_path: &Path,
-) -> Result<(Endpoint, Connection), EngineError> {
+) -> Result<(Endpoint, QuicConnection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let identity = load_or_create_identity()?;
     let peer_cert = rfsync_network::connect_pairing(server_addr, code, &identity.cert).await?;
