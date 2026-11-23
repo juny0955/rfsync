@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::ProtocolError;
-
 mod codec;
 mod error;
+
+pub use codec::{read_frame, write_frame};
+pub use error::ProtocolError;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum Message {

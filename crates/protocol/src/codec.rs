@@ -52,4 +52,28 @@ mod tests {
 
         assert_eq!(read_frame(&mut b).await.unwrap(), msg);
     }
+
+    #[tokio::test]
+    async fn 연달아_쓴_메시지는_각각_분리해서_읽힌다() {
+        let (mut a, mut b) = tokio::io::duplex(1024);
+        let first = Message::Hello { version: 1 };
+        let second = Message::Hello { version: 2 };
+
+        write_frame(&mut a, &first).await.unwrap();
+        write_frame(&mut a, &second).await.unwrap();
+
+        assert_eq!(read_frame(&mut b).await.unwrap(), first);
+        assert_eq!(read_frame(&mut b).await.unwrap(), second);
+    }
+
+    #[tokio::test]
+    async fn 상한을_넘는_길이는_거절한다() {
+        let (mut a, mut b) = tokio::io::duplex(1024);
+
+        // 내용 없이 "길이: u32::MAX"라는 4바이트만 보낸다
+        a.write_all(&u32::MAX.to_be_bytes()).await.unwrap();
+
+        let result = read_frame(&mut b).await;
+        assert!(matches!(result, Err(ProtocolError::FrameTooLarge { .. })));
+    }
 }
