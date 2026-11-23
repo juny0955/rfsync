@@ -1174,6 +1174,7 @@ version = "0.1.0"
 dependencies = [
  "rfsync-fs",
  "rfsync-network",
+ "rfsync-protocol",
  "rfsync-storage",
  "tempfile",
  "thiserror",
