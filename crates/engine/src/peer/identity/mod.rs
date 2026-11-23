@@ -2,11 +2,8 @@ use std::path::Path;
 
 use rfsync_network::generate_certificate;
 
-use crate::{
-    config::IDEN_DIR,
-    error::EngineError,
-    identity::store::{load_certificate, save_certificate},
-};
+use self::store::{load_certificate, save_certificate};
+use crate::{config::IDEN_DIR, error::EngineError};
 
 pub const SERVER_NAME: &str = "rfsync";
 

@@ -1,10 +1,8 @@
 use std::path::Path;
 
 use super::portable_path;
-use crate::{
-    error::EngineError,
-    snapshot::{create_initial_snapshot, sync_path, sync_root},
-};
+use super::{create_initial_snapshot, sync_path, sync_root};
+use crate::error::EngineError;
 
 mod boundaries;
 mod diff;

@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::{error::EngineError, snapshot::create_initial_snapshot};
+use super::snapshot::create_initial_snapshot;
+use crate::error::EngineError;
 
 pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
     let mut conn = rfsync_storage::open(db_path)?;

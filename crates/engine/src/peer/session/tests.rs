@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use super::*;
-use crate::identity::SERVER_NAME;
+use crate::peer::identity::SERVER_NAME;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 

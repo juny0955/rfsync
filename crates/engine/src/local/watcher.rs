@@ -4,10 +4,8 @@ use rfsync_fs::FsEvent;
 use rfsync_storage::{DbConnection, Root};
 use tracing::error;
 
-use crate::{
-    error::EngineError,
-    snapshot::{sync_path, sync_root},
-};
+use super::snapshot::{sync_path, sync_root};
+use crate::error::EngineError;
 
 /// CLI 전용
 pub fn watch_path(local_path: &Path, db_path: &Path) -> Result<(), EngineError> {

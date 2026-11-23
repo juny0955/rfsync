@@ -5,13 +5,11 @@ use std::{
 
 use rfsync_storage::{DbConnection, Root, error::StorageError};
 
-use crate::{
-    error::EngineError,
-    snapshot::{
-        diff::calc_diff,
-        sync::{apply_diff, remove_path, sync_directory, sync_file},
-    },
+use self::{
+    diff::calc_diff,
+    sync::{apply_diff, remove_path, sync_directory, sync_file},
 };
+use crate::error::EngineError;
 
 use self::entry::{portable_path, to_storage_file};
 

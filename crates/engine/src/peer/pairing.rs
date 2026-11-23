@@ -7,10 +7,8 @@ use std::{
 use rfsync_network::{Endpoint, QuicConnection};
 use tracing::info;
 
-use crate::{
-    error::EngineError,
-    identity::{SERVER_NAME, load_or_create_identity},
-};
+use super::identity::{SERVER_NAME, load_or_create_identity};
+use crate::error::EngineError;
 
 /// 페어링을 기다린다. 코드를 만들면 `on_code`로 건네며, 사용자에게 보여주는 일은 호출하는 쪽이 한다.
 pub async fn listen(
@@ -181,7 +179,7 @@ mod tests {
                 "--ignored",
                 "--exact",
                 "--nocapture",
-                "pairing::tests::run_peer",
+                "peer::pairing::tests::run_peer",
             ])
             .env("RFSYNC_TEST_PAIR_PORT", port.to_string())
             .env_remove("RFSYNC_TEST_PEER_ADDR");

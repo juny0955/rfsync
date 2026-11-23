@@ -8,11 +8,9 @@ use rfsync_protocol::{Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{task::JoinSet, time::sleep};
 use tracing::{debug, info, warn};
 
-use crate::{
-    error::EngineError,
-    identity::{Identity, SERVER_NAME},
-    session::backoff::Backoff,
-};
+use self::backoff::Backoff;
+use super::identity::{Identity, SERVER_NAME};
+use crate::error::EngineError;
 
 mod backoff;
 
