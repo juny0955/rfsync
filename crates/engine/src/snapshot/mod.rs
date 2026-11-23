@@ -19,11 +19,9 @@ mod diff;
 mod entry;
 mod sync;
 
-pub fn create_initial_snapshot(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
-    let mut conn = rfsync_storage::open(db_path)?;
-
+pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<(), EngineError> {
     let root =
-        rfsync_storage::get_root(&conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
+        rfsync_storage::get_root(conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
 
     if root.has_snapshot {
         return Err(EngineError::SnapshotAlreadyExists(root_id));

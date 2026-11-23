@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{error::EngineError, register_root};
 
-use super::super::create_initial_snapshot;
+use super::create_initial_snapshot_for_test;
 
 fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -84,8 +84,8 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
     let root_id = register_root(&root, &db_path)?;
     fs::write(root.join("second"), b"second")?;
 
-    let error =
-        create_initial_snapshot(root_id, &db_path).expect_err("duplicate snapshot must fail");
+    let error = create_initial_snapshot_for_test(root_id, &db_path)
+        .expect_err("duplicate snapshot must fail");
 
     assert!(matches!(error, EngineError::SnapshotAlreadyExists(id) if id == root_id));
     let conn = rfsync_storage::open(&db_path)?;
@@ -102,7 +102,7 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
 #[test]
 fn rejects_snapshot_for_missing_root() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
-    let result = create_initial_snapshot(42, &dir.join("snapshot.db"));
+    let result = create_initial_snapshot_for_test(42, &dir.join("snapshot.db"));
     assert!(matches!(result, Err(EngineError::RootNotFound(42))));
     fs::remove_dir_all(dir)?;
     Ok(())

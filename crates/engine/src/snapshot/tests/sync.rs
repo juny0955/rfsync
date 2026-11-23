@@ -6,8 +6,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{sync_path_for_test, sync_root_for_test};
-use crate::{error::EngineError, snapshot::create_initial_snapshot, watch_path, watch_root};
+use super::{create_initial_snapshot_for_test, sync_path_for_test, sync_root_for_test};
+use crate::{error::EngineError, watch_path, watch_root};
 
 type Snapshot = (Vec<String>, Vec<(String, i64)>);
 
@@ -90,7 +90,7 @@ fn sync_root_applies_changes_and_preserves_unchanged_files() -> Result<(), Box<d
     fs::write(f.root.join("modified"), b"old")?;
     fs::write(f.root.join("deleted"), b"old")?;
     fs::write(f.root.join("unchanged"), b"same")?;
-    create_initial_snapshot(f.root_id, &f.db)?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
     fs::remove_dir_all(f.root.join("removed"))?;
     fs::remove_file(f.root.join("deleted"))?;
     fs::write(f.root.join("modified"), b"changed")?;
@@ -121,7 +121,7 @@ fn sync_path_updates_only_selected_folder_tree() -> Result<(), Box<dyn Error>> {
     fs::write(f.root.join("docs/old/file"), b"old")?;
     fs::write(f.root.join("docs/change"), b"old")?;
     fs::write(f.root.join("docs-old/keep"), b"outside")?;
-    create_initial_snapshot(f.root_id, &f.db)?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
     fs::remove_dir_all(f.root.join("docs/old"))?;
     fs::write(f.root.join("docs/change"), b"changed")?;
     fs::create_dir(f.root.join("docs/new"))?;
@@ -152,7 +152,7 @@ fn sync_path_updates_only_selected_folder_tree() -> Result<(), Box<dyn Error>> {
 #[test]
 fn sync_path_handles_file_creation_modification_and_deletion() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
-    create_initial_snapshot(f.root_id, &f.db)?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
     let target = Path::new("file");
     fs::write(f.root.join(target), b"new")?;
     sync_path_for_test(f.root_id, &f.db, target)?;
@@ -180,7 +180,7 @@ fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(),
     let f = Fixture::new()?;
     let target = Path::new("item");
     fs::write(f.root.join(target), b"old")?;
-    create_initial_snapshot(f.root_id, &f.db)?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
     fs::remove_file(f.root.join(target))?;
     fs::create_dir_all(f.root.join("item/nested"))?;
     fs::write(f.root.join("item/nested/file"), b"new")?;
@@ -211,7 +211,7 @@ fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(),
 fn sync_path_rolls_back_when_subtree_has_invalid_path() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("item"), b"original")?;
-    create_initial_snapshot(f.root_id, &f.db)?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
     let before = f.snapshot()?;
     fs::remove_file(f.root.join("item"))?;
     fs::create_dir(f.root.join("item"))?;
@@ -230,7 +230,7 @@ fn sync_path_rolls_back_when_subtree_has_invalid_path() -> Result<(), Box<dyn Er
 fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("original"), b"original")?;
-    create_initial_snapshot(f.root_id, &f.db)?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
     let before = f.snapshot()?;
     fs::remove_file(f.root.join("original"))?;
     fs::write(f.root.join("invalid\\name"), b"new")?;
