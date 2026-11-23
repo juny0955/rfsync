@@ -1,7 +1,8 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use quinn::{
-    ClientConfig, Connection, Endpoint, ServerConfig, TransportConfig, VarInt,
+    ClientConfig, Connection, Endpoint, RecvStream as QuicRecvStream, SendStream as QuicSendStream,
+    ServerConfig, TransportConfig, VarInt,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     rustls::{
         self, RootCertStore,
@@ -37,6 +38,18 @@ pub async fn connect_quic(
     Ok(endpoint
         .connect_with(config, peer_addr, server_name)?
         .await?)
+}
+
+pub async fn open_stream(
+    conn: &Connection,
+) -> Result<(QuicSendStream, QuicRecvStream), NetworkError> {
+    Ok(conn.open_bi().await?)
+}
+
+pub async fn accept_stream(
+    conn: &Connection,
+) -> Result<(QuicSendStream, QuicRecvStream), NetworkError> {
+    Ok(conn.accept_bi().await?)
 }
 
 pub fn server_config(
@@ -128,8 +141,8 @@ mod tests {
 
     use super::{
         Arc, Connection, Endpoint, NetworkError, SocketAddr, TransportConfig, VarInt, accept_quic,
-        bind_quic, client_config, client_config_with, connect_quic, server_config,
-        server_config_with, transport_config,
+        accept_stream, bind_quic, client_config, client_config_with, connect_quic, open_stream,
+        server_config, server_config_with, transport_config,
     };
     use crate::cert::generate_certificate;
 
@@ -255,6 +268,68 @@ mod tests {
             handshake(client_identity, trusted_client).await?;
 
         exchange_ping_pong(server?, client?).await
+    }
+
+    #[tokio::test]
+    async fn opened_stream_is_accepted_and_carries_both_directions() -> Result<(), Box<dyn Error>> {
+        let client_identity = generate_certificate(CLIENT_NAME)?;
+        let trusted_client = client_identity.0.clone();
+        let ((_server_endpoint, server), (_client_endpoint, client)) =
+            handshake(client_identity, trusted_client).await?;
+        let (server, client) = (server?, client?);
+
+        timeout(TIMEOUT, async {
+            // 연 쪽이 먼저 써야 받는 쪽에 스트림이 보인다.
+            let client = async {
+                let (mut send, mut recv) = open_stream(&client).await?;
+                send.write_all(b"ping").await?;
+                let mut reply = [0u8; 4];
+                recv.read_exact(&mut reply).await?;
+                assert_eq!(&reply, b"pong");
+                Ok::<(), Box<dyn Error>>(())
+            };
+            // 같은 스트림을 닫지 않은 채로 받아서 답한다.
+            let server = async {
+                let (mut send, mut recv) = accept_stream(&server).await?;
+                let mut request = [0u8; 4];
+                recv.read_exact(&mut request).await?;
+                assert_eq!(&request, b"ping");
+                send.write_all(b"pong").await?;
+                Ok::<(), Box<dyn Error>>(())
+            };
+            tokio::try_join!(client, server)
+        })
+        .await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn each_opened_stream_is_a_separate_conversation() -> Result<(), Box<dyn Error>> {
+        let client_identity = generate_certificate(CLIENT_NAME)?;
+        let trusted_client = client_identity.0.clone();
+        let ((_server_endpoint, server), (_client_endpoint, client)) =
+            handshake(client_identity, trusted_client).await?;
+        let (server, client) = (server?, client?);
+
+        timeout(TIMEOUT, async {
+            let (mut first_send, _first_recv) = open_stream(&client).await?;
+            first_send.write_all(b"one!").await?;
+            let (mut second_send, _second_recv) = open_stream(&client).await?;
+            second_send.write_all(b"two!").await?;
+
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (_send, mut recv) = accept_stream(&server).await?;
+                let mut buf = [0u8; 4];
+                recv.read_exact(&mut buf).await?;
+                seen.push(buf);
+            }
+            seen.sort();
+            assert_eq!(seen, [*b"one!", *b"two!"]);
+            Ok::<(), Box<dyn Error>>(())
+        })
+        .await??;
+        Ok(())
     }
 
     #[tokio::test]
