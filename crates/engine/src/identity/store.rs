@@ -3,7 +3,7 @@ use std::{fs, io, io::Write, path::Path};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use crate::error::FsError;
+use crate::error::EngineError;
 
 const CERT_FILE: &str = "cert.der";
 const KEY_FILE: &str = "key.der";
@@ -11,27 +11,16 @@ const KEY_FILE: &str = "key.der";
 /// DER bytes for a local identity, ordered as (certificate, private key).
 pub type IdentityDer = (Vec<u8>, Vec<u8>);
 
-/// Reads the local certificate and private key DER, in that order.
-/// Returns `None` if the identity directory does not exist.
-///
-/// # Errors
-///
-/// Returns [`FsError::Certificate`] if the directory or either file cannot be read.
-pub fn load_certificate(dir: &Path) -> Result<Option<IdentityDer>, FsError> {
-    load_from(dir).map_err(FsError::Certificate)
+pub fn load_certificate(dir: &Path) -> Result<Option<IdentityDer>, EngineError> {
+    Ok(load_from(dir)?)
 }
 
-/// Saves a new local certificate and private key as DER files.
-///
-/// # Errors
-///
-/// Returns [`FsError::Certificate`] if the identity path already exists or saving fails.
 pub fn save_certificate(
     dir: &Path,
     certificate_der: &[u8],
     private_key_der: &[u8],
-) -> Result<(), FsError> {
-    save_to(dir, certificate_der, private_key_der).map_err(FsError::Certificate)
+) -> Result<(), EngineError> {
+    Ok(save_to(dir, certificate_der, private_key_der)?)
 }
 
 fn load_from(dir: &Path) -> io::Result<Option<IdentityDer>> {
