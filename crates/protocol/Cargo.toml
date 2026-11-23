@@ -4,3 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+thiserror.workspace = true
+serde = { version = "1.0.229", features = [ "derive" ] }
+postcard = { version = "1.2.0", features = [ "use-std" ] }
