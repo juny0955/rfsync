@@ -5,3 +5,4 @@ example.db
 iden/
 .iden-*/
 .DS_Store
+.omc

@@ -4,29 +4,34 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_network::generate_pairing_code;
+use rfsync_network::{Connection, Endpoint};
 
-use crate::error::EngineError;
+use crate::{
+    error::EngineError,
+    identity::{SERVER_NAME, load_or_create_identity},
+};
 
-const SERVER_NAME: &str = "rfsync";
 pub const DEFAULT_PORT: u16 = 10_000;
 
-pub async fn listen(port: u16, db_path: &Path) -> Result<(), EngineError> {
+pub async fn listen(
+    port: u16,
+    db_path: &Path,
+) -> Result<(rfsync_network::Endpoint, rfsync_network::Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (cert, key) = load_or_create_cert()?;
+    let identity = load_or_create_identity()?;
 
-    let code = generate_pairing_code();
+    let code = rfsync_network::generate_pairing_code();
     println!("code: {code}");
 
-    let peer_cert = rfsync_network::listen_pairing(bind_addr, &code, &cert).await?;
+    let peer_cert = rfsync_network::listen_pairing(bind_addr, &code, &identity.cert).await?;
     println!("A: 상대 키 확인 성공");
 
-    let config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
+    let config = rfsync_network::server_config(&identity.cert, &identity.key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, config)?;
-    let _connection = rfsync_network::accept_quic(&endpoint).await?;
+    let connection = rfsync_network::accept_quic(&endpoint).await?;
     save_device(db_path, &peer_cert, None)?;
     println!("A: QUIC 연결 성공");
-    Ok(())
+    Ok((endpoint, connection))
 }
 
 pub async fn connect(
@@ -34,20 +39,21 @@ pub async fn connect(
     server_addr: SocketAddr,
     code: &str,
     db_path: &Path,
-) -> Result<(), EngineError> {
+) -> Result<(Endpoint, Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (cert, key) = load_or_create_cert()?;
-    let peer_cert = rfsync_network::connect_pairing(server_addr, code, &cert).await?;
+    let identity = load_or_create_identity()?;
+    let peer_cert = rfsync_network::connect_pairing(server_addr, code, &identity.cert).await?;
     println!("B: 상대 키 확인 성공");
 
-    let server_config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
+    let server_config =
+        rfsync_network::server_config(&identity.cert, &identity.key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, server_config)?;
-    let client_config = rfsync_network::client_config(&cert, &key, &peer_cert)?;
-    let _connection =
+    let client_config = rfsync_network::client_config(&identity.cert, &identity.key, &peer_cert)?;
+    let connection =
         rfsync_network::connect_quic(&endpoint, server_addr, SERVER_NAME, client_config).await?;
     save_device(db_path, &peer_cert, Some(server_addr))?;
     println!("B: QUIC 연결 성공");
-    Ok(())
+    Ok((endpoint, connection))
 }
 
 fn save_device(
@@ -60,19 +66,6 @@ fn save_device(
     let conn = rfsync_storage::open(db_path)?;
     rfsync_storage::upsert_device(&conn, cert_der, endpoint.as_deref(), paired_at)?;
     Ok(())
-}
-
-fn load_or_create_cert() -> Result<(Vec<u8>, Vec<u8>), EngineError> {
-    let iden = match rfsync_fs::load_certificate()? {
-        Some(iden) => iden,
-        None => {
-            let (cert, key) = rfsync_network::generate_certificate(SERVER_NAME)?;
-            rfsync_fs::save_certificate(&cert, &key)?;
-            (cert, key)
-        }
-    };
-
-    Ok(iden)
 }
 
 #[cfg(test)]
@@ -221,10 +214,14 @@ mod tests {
                         // The listener prints its code just before binding TCP.
                         tokio::task::yield_now().await;
                     }
-                    result => return Ok(result?),
+                    result => {
+                        result?;
+                        return Ok(());
+                    }
                 }
             }
         }
-        Ok(listen(port, db_path).await?)
+        listen(port, db_path).await?;
+        Ok(())
     }
 }

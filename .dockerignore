@@ -1,0 +1,17 @@
+# 빌드 컨텍스트는 저장소 루트(docker/compose.yaml의 context: ..)다.
+# 빌드에 필요 없는 것과 로컬 신원·DB는 이미지 빌드로 보내지 않는다.
+
+# 빌드 산출물과 버전 관리
+target
+.git
+
+# 로컬 신원(개인 키)과 데이터베이스
+**/iden
+**/.iden-*
+**/*.db
+
+# 편집기와 도구 상태
+.idea
+.omc
+.omo
+.DS_Store

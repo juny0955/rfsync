@@ -351,6 +351,10 @@ dependencies = [
 [[package]]
 name = "daemon"
 version = "0.1.0"
+dependencies = [
+ "rfsync-engine",
+ "tokio",
+]
 
 [[package]]
 name = "data-encoding"
@@ -1083,7 +1087,6 @@ dependencies = [
  "rfsync-fs",
  "rfsync-network",
  "rfsync-storage",
- "rusqlite",
  "tempfile",
  "thiserror",
  "tokio",
