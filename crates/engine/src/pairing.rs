@@ -11,8 +11,6 @@ use crate::{
     identity::{SERVER_NAME, load_or_create_identity},
 };
 
-pub const DEFAULT_PORT: u16 = 10_000;
-
 pub async fn listen(
     port: u16,
     db_path: &Path,

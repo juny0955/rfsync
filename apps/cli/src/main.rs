@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use rfsync_engine::DEFAULT_PORT;
+use rfsync_engine::{DEFAULT_PORT, db_path};
 
 #[derive(Parser)]
 #[command(name = "rfsync", version, about = "파일 동기화 도구")]
@@ -43,7 +43,7 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let db_path = PathBuf::from("./example.db");
+    let db_path = db_path();
 
     match cli.command {
         Command::Add { path } => {
