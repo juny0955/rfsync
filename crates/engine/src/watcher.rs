@@ -2,6 +2,7 @@ use std::{path::Path, sync::mpsc};
 
 use rfsync_fs::FsEvent;
 use rfsync_storage::{DbConnection, Root};
+use tracing::error;
 
 use crate::{
     error::EngineError,
@@ -49,19 +50,19 @@ fn watch(mut conn: DbConnection, root: Root) -> Result<(), EngineError> {
                     Ok(relative) if !relative.as_os_str().is_empty() => relative,
                     _ => {
                         if let Err(e) = sync_root(&mut conn, &root) {
-                            eprintln!("동기화 오류: {e}");
+                            error!("동기화 오류: {e}");
                         }
                         continue;
                     }
                 };
 
                 if let Err(e) = sync_path(&mut conn, &root, relative_path) {
-                    eprintln!("동기화 오류: {e}");
+                    error!("동기화 오류: {e}");
                 }
             }
             FsEvent::Rescan => {
                 if let Err(e) = sync_root(&mut conn, &root) {
-                    eprintln!("동기화 오류: {e}");
+                    error!("동기화 오류: {e}");
                 }
             }
         }
