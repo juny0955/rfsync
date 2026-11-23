@@ -47,27 +47,27 @@ async fn main() -> ExitCode {
 
     match cli.command {
         Command::Add { path } => {
-            if let Err(error) = rfsync_engine::register_root(&path, &db_path) {
+            if let Err(error) = rfsync_engine::register_root(&path, db_path) {
                 eprintln!("오류: {error}");
                 return ExitCode::FAILURE;
             }
             println!("root 등록 및 초기 스냅샷 생성 완료");
         }
         Command::Watch { path } => {
-            if let Err(e) = rfsync_engine::watch_path(&path, &db_path) {
+            if let Err(e) = rfsync_engine::watch_path(&path, db_path) {
                 eprintln!("동기화 실패: {e}");
                 return ExitCode::FAILURE;
             }
         }
         Command::PairListen { port } => {
-            if let Err(error) = rfsync_engine::listen(port, &db_path).await {
+            if let Err(error) = rfsync_engine::listen(port, db_path).await {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }
             println!("페어링 성공");
         }
         Command::PairConnect { addr, code, port } => {
-            if let Err(error) = rfsync_engine::connect(port, addr, &code, &db_path).await {
+            if let Err(error) = rfsync_engine::connect(port, addr, &code, db_path).await {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }
