@@ -1,15 +1,18 @@
 use std::path::Path;
 
 use super::portable_path;
-use crate::{
-    error::EngineError,
-    snapshot::{sync_path, sync_root},
-};
+use super::{create_initial_snapshot, sync_path, sync_root};
+use crate::error::EngineError;
 
 mod boundaries;
 mod diff;
 mod initial_snapshot;
 mod sync;
+
+fn create_initial_snapshot_for_test(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
+    let mut conn = rfsync_storage::open(db_path)?;
+    create_initial_snapshot(&mut conn, root_id)
+}
 
 fn sync_root_for_test(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     let mut conn = rfsync_storage::open(db_path)?;

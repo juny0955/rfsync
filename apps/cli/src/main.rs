@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use rfsync_engine::DEFAULT_PORT;
+use rfsync_engine::{DEFAULT_PORT, db_path};
 
 #[derive(Parser)]
 #[command(name = "rfsync", version, about = "파일 동기화 도구")]
@@ -42,32 +42,38 @@ enum Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    // 로그는 프로그램의 출력(stdout)과 섞이지 않도록 stderr로 보낸다.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     let cli = Cli::parse();
-    let db_path = PathBuf::from("./example.db");
+    let db_path = db_path();
 
     match cli.command {
         Command::Add { path } => {
-            if let Err(error) = rfsync_engine::register_root(&path, &db_path) {
+            if let Err(error) = rfsync_engine::register_root(&path, db_path) {
                 eprintln!("오류: {error}");
                 return ExitCode::FAILURE;
             }
             println!("root 등록 및 초기 스냅샷 생성 완료");
         }
         Command::Watch { path } => {
-            if let Err(e) = rfsync_engine::watch_path(&path, &db_path) {
+            if let Err(e) = rfsync_engine::watch_path(&path, db_path) {
                 eprintln!("동기화 실패: {e}");
                 return ExitCode::FAILURE;
             }
         }
         Command::PairListen { port } => {
-            if let Err(error) = rfsync_engine::listen(port, &db_path).await {
+            if let Err(error) =
+                rfsync_engine::listen(port, db_path, |code| println!("code: {code}")).await
+            {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }
             println!("페어링 성공");
         }
         Command::PairConnect { addr, code, port } => {
-            if let Err(error) = rfsync_engine::connect(port, addr, &code, &db_path).await {
+            if let Err(error) = rfsync_engine::connect(port, addr, &code, db_path).await {
                 eprintln!("페어링 실패: {error}");
                 return ExitCode::FAILURE;
             }

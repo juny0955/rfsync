@@ -1,9 +1,10 @@
 use std::path::Path;
 
-use crate::{error::EngineError, snapshot::create_initial_snapshot};
+use super::snapshot::create_initial_snapshot;
+use crate::error::EngineError;
 
 pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
-    let conn = rfsync_storage::open(db_path)?;
+    let mut conn = rfsync_storage::open(db_path)?;
 
     let absolute_root = root.canonicalize()?;
     let local_path = absolute_root
@@ -12,6 +13,6 @@ pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
 
     let root_id = rfsync_storage::insert_root(&conn, local_path)?;
 
-    create_initial_snapshot(root_id, db_path)?;
+    create_initial_snapshot(&mut conn, root_id)?;
     Ok(root_id)
 }

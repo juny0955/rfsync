@@ -5,6 +5,5 @@ edition = "2024"
 
 [dependencies]
 notify = "9.0.0"
-tempfile = "3.27.0"
 thiserror.workspace = true
 blake3.workspace = true

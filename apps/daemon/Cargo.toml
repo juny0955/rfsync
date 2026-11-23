@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 rfsync-engine = { path = "../../crates/engine" }
 tokio = { version = "1.54.1", features = [ "macros", "rt", "signal", "time" ] }
+tracing-subscriber.workspace = true

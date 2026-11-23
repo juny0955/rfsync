@@ -6,12 +6,11 @@ use std::{
 use rfsync_network::{ClientConfig, Endpoint, NetworkError, QuicConnection};
 use rfsync_protocol::{Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{task::JoinSet, time::sleep};
+use tracing::{debug, info, warn};
 
-use crate::{
-    error::EngineError,
-    identity::{Identity, SERVER_NAME},
-    session::backoff::Backoff,
-};
+use self::backoff::Backoff;
+use super::identity::{Identity, SERVER_NAME};
+use crate::error::EngineError;
 
 mod backoff;
 
@@ -43,7 +42,7 @@ pub async fn run(
         };
 
         let Ok(addr) = addr.parse::<SocketAddr>() else {
-            eprintln!("저장된 주소가 올바르지 않습니다: {addr}");
+            warn!("저장된 주소가 올바르지 않습니다: {addr}");
             continue;
         };
 
@@ -72,7 +71,7 @@ async fn dial_loop(endpoint: Endpoint, addr: SocketAddr, config: ClientConfig) {
                 backoff.reset();
                 hold_connection(conn).await;
             }
-            Err(e) => eprintln!("{addr} 연결 실패: {e}"),
+            Err(e) => warn!("{addr} 연결 실패: {e}"),
         }
         sleep(backoff.next_delay()).await;
     }
@@ -85,23 +84,23 @@ async fn accept_loop(endpoint: &Endpoint) {
                 tokio::spawn(hold_connection(conn));
             }
             Err(NetworkError::QuicEndpointClosed) => return,
-            Err(e) => eprintln!("연결 수락 실패: {e}"),
+            Err(e) => warn!("연결 수락 실패: {e}"),
         }
     }
 }
 
 async fn hold_connection(conn: QuicConnection) {
     if let Err(e) = send_hello(&conn).await {
-        eprintln!("Hello 전송 실패: {e}");
+        warn!("Hello 전송 실패: {e}");
     }
 
     match recv_hello(&conn).await {
-        Ok(msg) => println!("수신 메세지: {msg:?}"),
-        Err(e) => eprintln!("Hello 수신 실패: {e}"),
+        Ok(msg) => debug!("수신 메시지: {msg:?}"),
+        Err(e) => warn!("Hello 수신 실패: {e}"),
     }
 
     let reason = conn.closed().await;
-    eprintln!("연결 종료: {reason}");
+    info!("연결 종료: {reason}");
 }
 
 async fn send_hello(conn: &QuicConnection) -> Result<(), EngineError> {

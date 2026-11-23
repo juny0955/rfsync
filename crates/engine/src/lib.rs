@@ -1,14 +1,8 @@
+mod config;
 pub mod error;
-pub mod identity;
-mod index;
-pub mod pairing;
-pub mod root;
-pub mod session;
-mod snapshot;
-pub mod watcher;
+mod local;
+mod peer;
 
-pub use identity::*;
-pub use pairing::*;
-pub use root::*;
-pub use session::*;
-pub use watcher::*;
+pub use config::{DEFAULT_PORT, db_path};
+pub use local::{register_root, watch_path, watch_root};
+pub use peer::{Identity, connect, listen, load_or_create_identity, run};
