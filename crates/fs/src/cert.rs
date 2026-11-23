@@ -26,7 +26,11 @@ pub fn load_certificate(dir: &Path) -> Result<Option<IdentityDer>, FsError> {
 /// # Errors
 ///
 /// Returns [`FsError::Certificate`] if the identity path already exists or saving fails.
-pub fn save_certificate(dir: &Path, certificate_der: &[u8], private_key_der: &[u8]) -> Result<(), FsError> {
+pub fn save_certificate(
+    dir: &Path,
+    certificate_der: &[u8],
+    private_key_der: &[u8],
+) -> Result<(), FsError> {
     save_to(dir, certificate_der, private_key_der).map_err(FsError::Certificate)
 }
 
