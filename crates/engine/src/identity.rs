@@ -2,7 +2,12 @@ use crate::error::EngineError;
 
 pub const SERVER_NAME: &str = "rfsync";
 
-pub(crate) fn load_or_create_identity() -> Result<(Vec<u8>, Vec<u8>), EngineError> {
+pub struct Identity {
+    pub cert: Vec<u8>,
+    pub key: Vec<u8>,
+}
+
+pub fn load_or_create_identity() -> Result<Identity, EngineError> {
     let iden = match rfsync_fs::load_certificate()? {
         Some(iden) => iden,
         None => {
@@ -12,5 +17,8 @@ pub(crate) fn load_or_create_identity() -> Result<(Vec<u8>, Vec<u8>), EngineErro
         }
     };
 
-    Ok(iden)
+    Ok(Identity {
+        cert: iden.0,
+        key: iden.1,
+    })
 }

@@ -18,15 +18,15 @@ pub async fn listen(
     db_path: &Path,
 ) -> Result<(rfsync_network::Endpoint, rfsync_network::Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (cert, key) = load_or_create_identity()?;
+    let identity = load_or_create_identity()?;
 
     let code = rfsync_network::generate_pairing_code();
     println!("code: {code}");
 
-    let peer_cert = rfsync_network::listen_pairing(bind_addr, &code, &cert).await?;
+    let peer_cert = rfsync_network::listen_pairing(bind_addr, &code, &identity.cert).await?;
     println!("A: 상대 키 확인 성공");
 
-    let config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
+    let config = rfsync_network::server_config(&identity.cert, &identity.key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, config)?;
     let connection = rfsync_network::accept_quic(&endpoint).await?;
     save_device(db_path, &peer_cert, None)?;
@@ -41,13 +41,14 @@ pub async fn connect(
     db_path: &Path,
 ) -> Result<(Endpoint, Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (cert, key) = load_or_create_identity()?;
-    let peer_cert = rfsync_network::connect_pairing(server_addr, code, &cert).await?;
+    let identity = load_or_create_identity()?;
+    let peer_cert = rfsync_network::connect_pairing(server_addr, code, &identity.cert).await?;
     println!("B: 상대 키 확인 성공");
 
-    let server_config = rfsync_network::server_config(&cert, &key, &[&peer_cert])?;
+    let server_config =
+        rfsync_network::server_config(&identity.cert, &identity.key, &[&peer_cert])?;
     let endpoint = rfsync_network::bind_quic(bind_addr, server_config)?;
-    let client_config = rfsync_network::client_config(&cert, &key, &peer_cert)?;
+    let client_config = rfsync_network::client_config(&identity.cert, &identity.key, &peer_cert)?;
     let connection =
         rfsync_network::connect_quic(&endpoint, server_addr, SERVER_NAME, client_config).await?;
     save_device(db_path, &peer_cert, Some(server_addr))?;
