@@ -6,9 +6,11 @@ use std::{
 
 use rfsync_network::{Connection, Endpoint};
 
-use crate::error::EngineError;
+use crate::{
+    error::EngineError,
+    identity::{SERVER_NAME, load_or_create_identity},
+};
 
-const SERVER_NAME: &str = "rfsync";
 pub const DEFAULT_PORT: u16 = 10_000;
 
 pub async fn listen(
@@ -16,7 +18,7 @@ pub async fn listen(
     db_path: &Path,
 ) -> Result<(rfsync_network::Endpoint, rfsync_network::Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (cert, key) = load_or_create_cert()?;
+    let (cert, key) = load_or_create_identity()?;
 
     let code = rfsync_network::generate_pairing_code();
     println!("code: {code}");
@@ -39,7 +41,7 @@ pub async fn connect(
     db_path: &Path,
 ) -> Result<(Endpoint, Connection), EngineError> {
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (cert, key) = load_or_create_cert()?;
+    let (cert, key) = load_or_create_identity()?;
     let peer_cert = rfsync_network::connect_pairing(server_addr, code, &cert).await?;
     println!("B: 상대 키 확인 성공");
 
@@ -63,19 +65,6 @@ fn save_device(
     let conn = rfsync_storage::open(db_path)?;
     rfsync_storage::upsert_device(&conn, cert_der, endpoint.as_deref(), paired_at)?;
     Ok(())
-}
-
-fn load_or_create_cert() -> Result<(Vec<u8>, Vec<u8>), EngineError> {
-    let iden = match rfsync_fs::load_certificate()? {
-        Some(iden) => iden,
-        None => {
-            let (cert, key) = rfsync_network::generate_certificate(SERVER_NAME)?;
-            rfsync_fs::save_certificate(&cert, &key)?;
-            (cert, key)
-        }
-    };
-
-    Ok(iden)
 }
 
 #[cfg(test)]
