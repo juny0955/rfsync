@@ -8,8 +8,9 @@ rfsync-fs = { path = "../fs" }
 rfsync-storage = { path = "../storage" }
 rfsync-network = { path = "../network" }
 rfsync-protocol = { path = "../protocol" }
-thiserror.workspace = true
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }
+thiserror.workspace = true
+blake3.workspace = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
