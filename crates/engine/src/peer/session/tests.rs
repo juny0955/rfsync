@@ -587,3 +587,91 @@ async fn starts_and_serves_when_a_root_is_registered() -> Result<(), Box<dyn Err
         })
         .await
 }
+
+/// 테스트에서 `tracing` 로그를 모아 보는 버퍼.
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl LogBuffer {
+    fn contents(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+
+    /// 원하는 문구가 로그에 나올 때까지 기다린다. 나오지 않으면 지금까지의 로그와 함께 실패한다.
+    async fn wait_for(&self, text: &str) {
+        let found = timeout(TIMEOUT, async {
+            while !self.contents().contains(text) {
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            found.is_ok(),
+            "로그에 {text:?}가 없다:\n{}",
+            self.contents()
+        );
+    }
+}
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+    type Writer = LogBuffer;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// 이 테스트가 끝날 때까지 현재 스레드의 로그를 버퍼로 보낸다. 테스트 런타임은 단일 스레드라 데몬의 작업도 잡힌다.
+fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    (logs, tracing::subscriber::set_default(subscriber))
+}
+
+#[tokio::test]
+async fn compares_the_peers_index_with_its_own_after_the_handshake() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    // 내 목록: a.txt("hello"), sub/b.txt("world")
+    let (_root, _) = register_root_with_files(&fixture)?;
+    let (logs, _guard) = capture_logs();
+
+    // 상대 목록: a.txt는 같고, sub/b.txt는 내용이 다르고, new.txt는 내게 없다.
+    let mut same = entry("a.txt");
+    same.hash = *blake3::hash(b"hello").as_bytes();
+    let peer_index = vec![same, entry("sub/b.txt"), entry("new.txt")];
+
+    fixture
+        .with_daemon(|| async {
+            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+            let (mut send, _recv) = open_stream(&conn).await?;
+            write_frame(&mut send, &hello()).await?;
+            write_frame(&mut send, &index_message(peer_index)).await?;
+
+            logs.wait_for("내게 없는 파일 1개, 내용이 다른 파일 1개")
+                .await;
+            Ok(())
+        })
+        .await?;
+
+    let log = logs.contents();
+    assert!(log.contains("내게 없는 파일: new.txt"), "{log}");
+    assert!(log.contains("내용이 다른 파일: sub/b.txt"), "{log}");
+    assert!(!log.contains("내게 없는 파일: a.txt"), "{log}");
+    Ok(())
+}

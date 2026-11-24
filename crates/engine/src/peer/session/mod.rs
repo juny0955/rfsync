@@ -18,6 +18,7 @@ use tracing::{debug, info, warn};
 
 use self::backoff::Backoff;
 use super::{
+    compare::compare_index,
     identity::{Identity, SERVER_NAME},
     index::load_index,
 };
@@ -128,6 +129,19 @@ async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec
                 );
             }
             info!("상대 파일 목록 {}개를 받았습니다", peer.index.len());
+
+            let comparison = compare_index(&index, &peer.index);
+            info!(
+                "내게 없는 파일 {}개, 내용이 다른 파일 {}개",
+                comparison.missing.len(),
+                comparison.changed.len()
+            );
+            for entry in &comparison.missing {
+                debug!("내게 없는 파일: {}", entry.path);
+            }
+            for entry in &comparison.changed {
+                debug!("내용이 다른 파일: {}", entry.path);
+            }
             Some(stream)
         }
         Err(e) => {

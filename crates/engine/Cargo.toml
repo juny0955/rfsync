@@ -15,4 +15,5 @@ blake3.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 tokio = { version = "1.54.1", features = ["io-util", "process"] }
