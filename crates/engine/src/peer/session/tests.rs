@@ -305,64 +305,268 @@ fn hello() -> Message {
     }
 }
 
-/// 상대가 연 uni 스트림에서 첫 메시지를 읽는다.
-async fn read_hello(conn: &QuicConnection) -> Result<Message, Box<dyn Error>> {
-    let mut recv = timeout(TIMEOUT, conn.accept_uni()).await??;
-    Ok(timeout(TIMEOUT, read_frame(&mut recv)).await??)
+fn entry(path: &str) -> Entry {
+    Entry {
+        path: path.to_owned(),
+        size: 1,
+        hash: [9; 32],
+        modified_secs: 1,
+        modified_nanos: 2,
+    }
+}
+
+fn index_message(entries: Vec<Entry>) -> Message {
+    Message::Index { entries }
+}
+
+/// 상대 쪽에서 데몬이 보낸 첫 두 프레임(`Hello`, 파일 목록)을 그대로 읽는다.
+async fn read_handshake(recv: &mut QuicRecvStream) -> Result<(Message, Message), Box<dyn Error>> {
+    let first = timeout(TIMEOUT, read_frame(recv)).await??;
+    let second = timeout(TIMEOUT, read_frame(recv)).await??;
+    Ok((first, second))
+}
+
+/// 상대 쪽에서 자기 `Hello`와 빈 파일 목록을 보낸다. 먼저 써야 받는 쪽에 스트림이 보인다.
+async fn write_handshake(send: &mut QuicSendStream) -> Result<(), Box<dyn Error>> {
+    write_frame(send, &hello()).await?;
+    write_frame(send, &index_message(Vec::new())).await?;
+    Ok(())
+}
+
+/// 루트 하나를 등록한 DB와 그 목록이 만드는 기대 메시지를 준비한다.
+fn register_root_with_files(
+    fixture: &Fixture,
+) -> Result<(tempfile::TempDir, Message), Box<dyn Error>> {
+    let root_dir = tempfile::tempdir()?;
+    std::fs::write(root_dir.path().join("a.txt"), "hello")?;
+    std::fs::create_dir(root_dir.path().join("sub"))?;
+    std::fs::write(root_dir.path().join("sub/b.txt"), "world")?;
+    crate::register_root(root_dir.path(), &fixture.db_path)?;
+    let expected = index_message(load_index(&fixture.db_path)?);
+    Ok((root_dir, expected))
 }
 
 #[tokio::test]
-async fn sends_hello_to_a_peer_that_connects_to_the_daemon() -> Result<(), Box<dyn Error>> {
+async fn sends_hello_then_index_to_a_peer_that_connects_to_the_daemon() -> Result<(), Box<dyn Error>>
+{
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
+    let (_root, expected) = register_root_with_files(&fixture)?;
 
     fixture
         .with_daemon(|| async {
             let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+            let (mut send, mut recv) = open_stream(&conn).await?;
+            write_handshake(&mut send).await?;
 
-            assert_eq!(read_hello(&conn).await?, hello());
+            let (first, second) = read_handshake(&mut recv).await?;
+
+            assert_eq!(first, hello());
+            assert_eq!(second, expected);
             Ok(())
         })
         .await
 }
 
 #[tokio::test]
-async fn sends_hello_to_a_peer_the_daemon_dials() -> Result<(), Box<dyn Error>> {
+async fn sends_hello_then_index_to_a_peer_the_daemon_dials() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let peer = fixture.bind_peer(&fixture.peer)?;
     fixture.pair_peer_at(peer.local_addr()?)?;
+    let (_root, expected) = register_root_with_files(&fixture)?;
 
     fixture
         .with_daemon(|| async {
             let conn = accept_from_daemon(&peer).await?;
+            let (mut send, mut recv) = timeout(TIMEOUT, accept_stream(&conn)).await??;
+            write_handshake(&mut send).await?;
 
-            assert_eq!(read_hello(&conn).await?, hello());
+            let (first, second) = read_handshake(&mut recv).await?;
+
+            assert_eq!(first, hello());
+            assert_eq!(second, expected);
             Ok(())
         })
         .await
 }
 
 #[tokio::test]
-async fn keeps_the_connection_open_after_exchanging_hello() -> Result<(), Box<dyn Error>> {
+async fn sends_an_empty_index_when_no_root_is_registered() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
 
     fixture
         .with_daemon(|| async {
             let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+            let (mut send, mut recv) = open_stream(&conn).await?;
+            write_handshake(&mut send).await?;
 
-            // 데몬의 Hello를 받고, 우리도 Hello를 보낸다.
-            assert_eq!(read_hello(&conn).await?, hello());
-            let mut send = conn.open_uni().await?;
-            write_frame(&mut send, &hello()).await?;
-            let _ = send.finish();
+            let (_, second) = read_handshake(&mut recv).await?;
 
-            // Hello 교환이 끝나도 데몬이 연결을 닫으면 안 된다.
+            assert_eq!(second, index_message(Vec::new()));
+            Ok(())
+        })
+        .await
+}
+
+#[tokio::test]
+async fn keeps_the_connection_open_after_the_handshake() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+
+    fixture
+        .with_daemon(|| async {
+            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+            let (mut send, mut recv) = open_stream(&conn).await?;
+            write_handshake(&mut send).await?;
+            read_handshake(&mut recv).await?;
+
+            // 핸드셰이크가 끝나도 데몬이 연결을 닫으면 안 된다.
             sleep(Duration::from_millis(300)).await;
             assert!(conn.close_reason().is_none());
             Ok(())
         })
         .await
+}
+
+#[tokio::test]
+async fn keeps_the_connection_open_when_the_peer_sends_an_unexpected_message()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+
+    fixture
+        .with_daemon(|| async {
+            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+            let (mut send, _recv) = open_stream(&conn).await?;
+            // Hello가 와야 할 자리에 목록을 보내 핸드셰이크를 실패시킨다.
+            write_frame(&mut send, &index_message(Vec::new())).await?;
+
+            // 핸드셰이크가 실패해도 연결 자체는 닫지 않는다.
+            sleep(Duration::from_millis(300)).await;
+            assert!(conn.close_reason().is_none());
+            Ok(())
+        })
+        .await
+}
+
+/// 한 방향으로 흐르는 메모리 통로 한 쌍(쓰는 쪽, 읽는 쪽)을 만든다.
+fn channel() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
+    tokio::io::duplex(64 * 1024)
+}
+
+/// `exchange`를 제한 시간 안에 실행한다. 구현이 잘못돼 서로 기다리면 멈추지 않고 실패하게 한다.
+async fn exchange_in_time(
+    send: &mut (impl AsyncWrite + Unpin),
+    recv: &mut (impl AsyncRead + Unpin),
+    index: &[Entry],
+) -> Result<PeerHandshake, EngineError> {
+    timeout(TIMEOUT, exchange(send, recv, index))
+        .await
+        .expect("제한 시간 안에 끝나야 한다")
+}
+
+#[tokio::test]
+async fn exchange_gives_each_side_the_others_index() {
+    let (mut a_to_b_write, mut a_to_b_read) = channel();
+    let (mut b_to_a_write, mut b_to_a_read) = channel();
+    let a_index = vec![entry("a-only.txt")];
+    let b_index = vec![entry("b-only.txt"), entry("sub/b.txt")];
+
+    let (a_got, b_got) = tokio::try_join!(
+        exchange_in_time(&mut a_to_b_write, &mut b_to_a_read, &a_index),
+        exchange_in_time(&mut b_to_a_write, &mut a_to_b_read, &b_index),
+    )
+    .unwrap();
+
+    assert_eq!(a_got.index, b_index);
+    assert_eq!(b_got.index, a_index);
+    assert_eq!(a_got.version, PROTOCOL_VERSION);
+    assert_eq!(b_got.version, PROTOCOL_VERSION);
+}
+
+#[tokio::test]
+async fn exchange_reports_the_peers_protocol_version_without_failing() {
+    let (mut my_write, _peer_read) = channel();
+    let (mut peer_write, mut my_read) = channel();
+    write_frame(
+        &mut peer_write,
+        &Message::Hello {
+            version: PROTOCOL_VERSION + 1,
+        },
+    )
+    .await
+    .unwrap();
+    write_frame(&mut peer_write, &index_message(Vec::new()))
+        .await
+        .unwrap();
+
+    let peer = exchange_in_time(&mut my_write, &mut my_read, &[])
+        .await
+        .unwrap();
+
+    assert_eq!(peer.version, PROTOCOL_VERSION + 1);
+}
+
+#[tokio::test]
+async fn exchange_rejects_a_first_message_that_is_not_hello() {
+    let (mut my_write, _peer_read) = channel();
+    let (mut peer_write, mut my_read) = channel();
+    write_frame(&mut peer_write, &index_message(Vec::new()))
+        .await
+        .unwrap();
+
+    let result = exchange_in_time(&mut my_write, &mut my_read, &[]).await;
+
+    assert!(matches!(
+        result,
+        Err(EngineError::UnexpectedMessage("Hello"))
+    ));
+}
+
+#[tokio::test]
+async fn exchange_rejects_a_second_message_that_is_not_an_index() {
+    let (mut my_write, _peer_read) = channel();
+    let (mut peer_write, mut my_read) = channel();
+    write_frame(&mut peer_write, &hello()).await.unwrap();
+    write_frame(&mut peer_write, &hello()).await.unwrap();
+
+    let result = exchange_in_time(&mut my_write, &mut my_read, &[]).await;
+
+    assert!(matches!(
+        result,
+        Err(EngineError::UnexpectedMessage("Index"))
+    ));
+}
+
+#[tokio::test]
+async fn exchange_fails_when_the_peer_closes_before_sending() {
+    let (mut my_write, _peer_read) = channel();
+    let (peer_write, mut my_read) = channel();
+    drop(peer_write);
+
+    let result = exchange_in_time(&mut my_write, &mut my_read, &[]).await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn exchange_fails_instead_of_sending_an_index_over_the_frame_limit() {
+    let (mut my_write, _peer_read) = channel();
+    let (_peer_write, mut my_read) = channel();
+    // 항목 하나가 약 120바이트라 1 MiB 상한을 넘기려면 만 개를 훌쩍 넘겨야 한다.
+    let too_many: Vec<Entry> = (0..20_000)
+        .map(|i| entry(&format!("dir/{i:0>100}.txt")))
+        .collect();
+
+    let result = exchange_in_time(&mut my_write, &mut my_read, &too_many).await;
+
+    assert!(matches!(
+        result,
+        Err(EngineError::Protocol(
+            rfsync_protocol::ProtocolError::FrameTooLarge { .. }
+        ))
+    ));
 }
 
 #[tokio::test]
