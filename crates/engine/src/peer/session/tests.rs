@@ -8,7 +8,7 @@ use std::{
 
 use rfsync_network::{Endpoint, QuicConnection, generate_certificate};
 use tokio::{
-    sync::oneshot,
+    sync::{mpsc, oneshot},
     time::{sleep, timeout},
 };
 
@@ -67,11 +67,9 @@ impl Fixture {
         Ok(())
     }
 
-    fn run(
-        &self,
-        shutdown: impl Future<Output = ()>,
-    ) -> impl Future<Output = Result<(), EngineError>> {
-        run(&self.daemon, self.port, &self.db_path, shutdown)
+    async fn run(&self, shutdown: impl Future<Output = ()>) -> Result<(), EngineError> {
+        let (events, _rx) = mpsc::channel(8);
+        run(&self.daemon, self.port, &self.db_path, events, shutdown).await
     }
 
     /// 주어진 신원으로 데몬에 접속한다. 엔드포인트도 연결이 살아 있는 동안 유지해야 한다.
@@ -665,37 +663,4 @@ fn logs() -> &'static LogBuffer {
             .expect("테스트 프로세스에서 전역 구독자는 한 번만 설치한다");
         logs
     })
-}
-
-#[tokio::test]
-async fn compares_the_peers_index_with_its_own_after_the_handshake() -> Result<(), Box<dyn Error>> {
-    let fixture = Fixture::new()?;
-    fixture.pair_peer()?;
-    // 내 목록: a.txt("hello"), sub/b.txt("world")
-    let (_root, _) = register_root_with_files(&fixture)?;
-    let logs = logs();
-
-    // 상대 목록: a.txt는 같고, sub/b.txt는 내용이 다르고, new.txt는 내게 없다.
-    let mut same = entry("a.txt");
-    same.hash = *blake3::hash(b"hello").as_bytes();
-    let peer_index = vec![same, entry("sub/b.txt"), entry("c4-only-on-peer.txt")];
-
-    fixture
-        .with_daemon(|| async {
-            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
-            let (mut send, _recv) = open_stream(&conn).await?;
-            write_frame(&mut send, &hello()).await?;
-            write_frame(&mut send, &index_message(peer_index)).await?;
-
-            logs.wait_for("내게 없는 파일 1개, 내용이 다른 파일 1개")
-                .await;
-            Ok(())
-        })
-        .await?;
-
-    let log = logs.contents();
-    assert!(log.contains("내게 없는 파일: c4-only-on-peer.txt"), "{log}");
-    assert!(log.contains("내용이 다른 파일: sub/b.txt"), "{log}");
-    assert!(!log.contains("내게 없는 파일: a.txt"), "{log}");
-    Ok(())
 }

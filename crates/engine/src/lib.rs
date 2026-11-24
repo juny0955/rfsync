@@ -2,6 +2,7 @@ mod config;
 pub mod error;
 mod local;
 mod peer;
+mod sync;
 
 pub use config::{DEFAULT_PORT, db_path};
 pub use local::{register_root, watch_path, watch_root};

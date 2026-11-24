@@ -11,6 +11,7 @@ use rfsync_network::{
 use rfsync_protocol::{Entry, Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
+    sync::mpsc::Sender,
     task::JoinSet,
     time::sleep,
 };
@@ -18,11 +19,10 @@ use tracing::{debug, info, warn};
 
 use self::backoff::Backoff;
 use super::{
-    compare::compare_index,
     identity::{Identity, SERVER_NAME},
     index::load_index,
 };
-use crate::error::EngineError;
+use crate::{error::EngineError, peer::PeerEvent};
 
 mod backoff;
 
@@ -37,6 +37,7 @@ pub async fn run(
     identity: &Identity,
     port: u16,
     db_path: &Path,
+    events: Sender<PeerEvent>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), EngineError> {
     let devices = {
@@ -70,12 +71,18 @@ pub async fn run(
 
         let config =
             rfsync_network::client_config(&identity.cert, &identity.key, &device.cert_der)?;
-        dials.spawn(dial_loop(endpoint.clone(), addr, config, index.clone()));
+        dials.spawn(dial_loop(
+            endpoint.clone(),
+            addr,
+            config,
+            index.clone(),
+            events.clone(),
+        ));
     }
 
     tokio::select! {
         _ = shutdown => {}
-        _ = accept_loop(&endpoint, index) => {}
+        _ = accept_loop(&endpoint, index, events.clone()) => {}
     }
     endpoint.close(0u32.into(), b"shutdown");
     dials.shutdown().await;
@@ -89,6 +96,7 @@ async fn dial_loop(
     addr: SocketAddr,
     config: ClientConfig,
     index: Arc<Vec<Entry>>,
+    events: Sender<PeerEvent>,
 ) {
     let mut backoff = Backoff::new();
 
@@ -96,7 +104,7 @@ async fn dial_loop(
         match rfsync_network::connect_quic(&endpoint, addr, SERVER_NAME, config.clone()).await {
             Ok(conn) => {
                 backoff.reset();
-                hold_connection(conn, SessionRole::Dialer, index.clone()).await;
+                hold_connection(conn, SessionRole::Dialer, index.clone(), events.clone()).await;
             }
             Err(e) => warn!("{addr} 연결 실패: {e}"),
         }
@@ -104,11 +112,16 @@ async fn dial_loop(
     }
 }
 
-async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>) {
+async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>, events: Sender<PeerEvent>) {
     loop {
         match rfsync_network::accept_quic(endpoint).await {
             Ok(conn) => {
-                tokio::spawn(hold_connection(conn, SessionRole::Acceptor, index.clone()));
+                tokio::spawn(hold_connection(
+                    conn,
+                    SessionRole::Acceptor,
+                    index.clone(),
+                    events.clone(),
+                ));
             }
             Err(NetworkError::QuicEndpointClosed) => return,
             Err(e) => warn!("연결 수락 실패: {e}"),
@@ -116,7 +129,12 @@ async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>) {
     }
 }
 
-async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec<Entry>>) {
+async fn hold_connection(
+    conn: QuicConnection,
+    role: SessionRole,
+    index: Arc<Vec<Entry>>,
+    events: Sender<PeerEvent>,
+) {
     debug!("연결 시작: {role:?}, 보낼 파일 목록 {}개", index.len());
 
     // 핸드셰이크가 끝나도 스트림을 닫지 않고, 연결이 끝날 때까지 쥐고 있는다.
@@ -130,17 +148,14 @@ async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec
             }
             info!("상대 파일 목록 {}개를 받았습니다", peer.index.len());
 
-            let comparison = compare_index(&index, &peer.index);
-            info!(
-                "내게 없는 파일 {}개, 내용이 다른 파일 {}개",
-                comparison.missing.len(),
-                comparison.changed.len()
-            );
-            for entry in &comparison.missing {
-                debug!("내게 없는 파일: {}", entry.path);
-            }
-            for entry in &comparison.changed {
-                debug!("내용이 다른 파일: {}", entry.path);
+            if events
+                .send(PeerEvent::IndexReceived {
+                    index: peer.index.clone(),
+                })
+                .await
+                .is_err()
+            {
+                warn!("coordinator가 닫혀 있어 상대 목록을 전달하지 못하였습니다");
             }
             Some(stream)
         }
