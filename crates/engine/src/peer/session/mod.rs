@@ -10,8 +10,8 @@ use rfsync_network::{
 };
 use rfsync_protocol::{Entry, Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::mpsc::Sender,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    sync::{mpsc::Sender, oneshot},
     task::JoinSet,
     time::sleep,
 };
@@ -136,6 +136,7 @@ async fn hold_connection(
     debug!("연결 시작: {role:?}, 보낼 파일 목록 {}개", index.len());
 
     // 핸드셰이크가 끝나도 스트림을 닫지 않고, 연결이 끝날 때까지 쥐고 있는다.
+    let mut serving = None;
     let _stream = match handshake(&conn, role, &index).await {
         Ok((stream, peer)) => {
             if peer.version != PROTOCOL_VERSION {
@@ -155,6 +156,9 @@ async fn hold_connection(
             {
                 warn!("coordinator가 닫혀 있어 상대 목록을 전달하지 못하였습니다");
             }
+
+            // 핸드셰이크가 끝난 연결에서만 상대의 파일 요청을 받는다.
+            serving = Some(tokio::spawn(serve_requests(conn.clone(), events.clone())));
             Some(stream)
         }
         Err(e) => {
@@ -165,6 +169,71 @@ async fn hold_connection(
 
     let reason = conn.closed().await;
     info!("연결 종료: {reason}");
+    if let Some(serving) = serving {
+        serving.abort();
+    }
+}
+
+/// 상대가 여는 스트림을 연결이 끝날 때까지 받는다. 스트림 하나는 파일 하나의 요청이다.
+async fn serve_requests(conn: QuicConnection, events: Sender<PeerEvent>) {
+    while let Ok((send, recv)) = accept_stream(&conn).await {
+        let events = events.clone();
+        tokio::spawn(async move {
+            if let Err(e) = serve_file_stream(send, recv, events).await {
+                warn!("파일 요청 처리 실패: {e}");
+            }
+        });
+    }
+}
+
+/// 파일 스트림 하나를 처리한다. `FileRequest`를 읽고 coordinator에게 파일을 받아,
+/// 있으면 `FileFound` 헤더 뒤에 파일 내용을 프레임 없이 이어 보내고 없으면 `FileNotFound`를 보낸다.
+async fn serve_file_stream(
+    mut send: QuicSendStream,
+    mut recv: QuicRecvStream,
+    events: Sender<PeerEvent>,
+) -> Result<(), EngineError> {
+    let Message::FileRequest { path } = read_frame(&mut recv).await? else {
+        return Err(EngineError::UnexpectedMessage("FileRequest"));
+    };
+
+    let (reply, answer) = oneshot::channel();
+    let offer = if events
+        .send(PeerEvent::FileRequested { path, reply })
+        .await
+        .is_ok()
+    {
+        // coordinator가 답하지 않고 끝났다면 없는 파일처럼 다룬다.
+        answer.await.ok().flatten()
+    } else {
+        None
+    };
+
+    let Some(mut offer) = offer else {
+        write_frame(&mut send, &Message::FileNotFound).await?;
+        let _ = send.finish();
+        return Ok(());
+    };
+
+    write_frame(
+        &mut send,
+        &Message::FileFound {
+            size: offer.size,
+            hash: offer.hash,
+        },
+    )
+    .await?;
+
+    // 파일이 그새 커졌어도 헤더에 적은 크기까지만 보낸다.
+    let sent = tokio::io::copy(&mut (&mut offer.file).take(offer.size), &mut send).await?;
+    if sent != offer.size {
+        // 파일이 줄어들어 약속한 만큼 못 보냈다. 정상 종료로 보이지 않게 스트림을 끊는다.
+        let _ = send.reset(0u32.into());
+        warn!("약속한 {}바이트 중 {sent}바이트만 보냈습니다", offer.size);
+        return Ok(());
+    }
+    let _ = send.finish();
+    Ok(())
 }
 
 /// 연결에서 쓰는 대화 창구. 핸드셰이크 뒤에도 같은 스트림으로 계속 주고받는다.

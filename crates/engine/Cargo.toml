@@ -8,7 +8,7 @@ rfsync-fs = { path = "../fs" }
 rfsync-storage = { path = "../storage" }
 rfsync-network = { path = "../network" }
 rfsync-protocol = { path = "../protocol" }
-tokio = { version = "1.54.1", features = ["fs", "macros", "rt", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
 tempfile = "3.27.0"
 thiserror.workspace = true
 blake3.workspace = true
