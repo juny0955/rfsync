@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use rfsync_protocol::Entry;
 use rfsync_storage::DbConnection;
@@ -37,6 +40,19 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
 
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+/// DB에서 첫 번째 루트의 파일 목록을 만든다. 루트가 없으면 빈 목록이다.
+///
+/// 임시: 루트가 하나뿐이라고 가정해 첫 루트만 보낸다. 공유 모델(share_id)을 넣을 때 다시 설계한다.
+pub(super) fn load_index(db_path: &Path) -> Result<Vec<Entry>, EngineError> {
+    let conn = rfsync_storage::open(db_path)?;
+    let roots = rfsync_storage::list_roots(&conn)?;
+
+    match roots.first() {
+        Some(root) => build_index(&conn, root.id),
+        None => Ok(Vec::new()),
+    }
 }
 
 fn hash_from_hex(hex: &str) -> Result<[u8; 32], EngineError> {
@@ -148,5 +164,52 @@ mod tests {
         let conn = rfsync_storage::open(&db).unwrap();
 
         assert!(build_index(&conn, root_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn 루트가_없으면_빈_index를_돌려준다() {
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = db_dir.path().join("test.db");
+        rfsync_storage::open(&db).unwrap();
+
+        assert!(load_index(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn 등록된_루트의_파일_목록을_돌려준다() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        std::fs::write(root_dir.path().join("a.txt"), "hello").unwrap();
+        std::fs::create_dir(root_dir.path().join("sub")).unwrap();
+        std::fs::write(root_dir.path().join("sub/b.txt"), "world").unwrap();
+        let db = db_dir.path().join("test.db");
+        let root_id = crate::register_root(root_dir.path(), &db).unwrap();
+
+        let loaded = load_index(&db).unwrap();
+
+        let conn = rfsync_storage::open(&db).unwrap();
+        assert_eq!(loaded, build_index(&conn, root_id).unwrap());
+        let paths: Vec<&str> = loaded.iter().map(|entry| entry.path.as_str()).collect();
+        assert_eq!(paths, ["a.txt", "sub/b.txt"]);
+    }
+
+    #[test]
+    fn 루트가_여러_개여도_첫_루트의_목록만_돌려준다() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("first.txt"), "1").unwrap();
+        std::fs::write(second.path().join("second.txt"), "2").unwrap();
+        let db = db_dir.path().join("test.db");
+        crate::register_root(first.path(), &db).unwrap();
+        crate::register_root(second.path(), &db).unwrap();
+
+        let paths: Vec<String> = load_index(&db)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+
+        assert_eq!(paths, ["first.txt"]);
     }
 }
