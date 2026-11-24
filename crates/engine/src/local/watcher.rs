@@ -1,12 +1,11 @@
 use std::{path::Path, sync::mpsc};
 
 use rfsync_fs::FsEvent;
-use rfsync_storage::Root;
+use rfsync_storage::{DbConnection, Root};
+use tracing::error;
 
-use crate::{
-    error::EngineError,
-    snapshot::{sync_path, sync_root},
-};
+use super::snapshot::{sync_path, sync_root};
+use crate::error::EngineError;
 
 /// CLI 전용
 pub fn watch_path(local_path: &Path, db_path: &Path) -> Result<(), EngineError> {
@@ -30,7 +29,7 @@ pub fn watch_root(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     watch(conn, root)
 }
 
-fn watch(mut conn: rfsync_storage::Connection, root: Root) -> Result<(), EngineError> {
+fn watch(mut conn: DbConnection, root: Root) -> Result<(), EngineError> {
     if !root.has_snapshot {
         return Err(EngineError::NotInitializedRoot(root.id));
     }
@@ -49,19 +48,19 @@ fn watch(mut conn: rfsync_storage::Connection, root: Root) -> Result<(), EngineE
                     Ok(relative) if !relative.as_os_str().is_empty() => relative,
                     _ => {
                         if let Err(e) = sync_root(&mut conn, &root) {
-                            eprintln!("동기화 오류: {e}");
+                            error!("동기화 오류: {e}");
                         }
                         continue;
                     }
                 };
 
                 if let Err(e) = sync_path(&mut conn, &root, relative_path) {
-                    eprintln!("동기화 오류: {e}");
+                    error!("동기화 오류: {e}");
                 }
             }
             FsEvent::Rescan => {
                 if let Err(e) = sync_root(&mut conn, &root) {
-                    eprintln!("동기화 오류: {e}");
+                    error!("동기화 오류: {e}");
                 }
             }
         }

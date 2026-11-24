@@ -9,6 +9,21 @@ pub struct Root {
     pub has_snapshot: bool,
 }
 
+// 임시: 루트가 하나뿐이라고 가정해 정렬을 보장하지 않는다. 공유 모델(share_id)을 넣을 때 다시 설계한다.
+pub fn list_roots(conn: &Connection) -> Result<Vec<Root>, StorageError> {
+    let mut stmt = conn.prepare("SELECT id, local_path, has_snapshot FROM roots")?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(Root {
+            id: row.get(0)?,
+            local_path: row.get(1)?,
+            has_snapshot: row.get(2)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn insert_root(conn: &Connection, local_path: &str) -> Result<i64, StorageError> {
     conn.query_row(
         "INSERT INTO roots (local_path)
@@ -211,6 +226,45 @@ mod tests {
         let root = get_root(&conn, 42)?;
 
         assert!(root.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn lists_no_roots_in_an_empty_database() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+
+        assert!(list_roots(&conn)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn lists_the_registered_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+
+        let roots = list_roots(&conn)?;
+
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].id, root_id);
+        assert_eq!(roots[0].local_path, "/example");
+        assert!(!roots[0].has_snapshot);
+        Ok(())
+    }
+
+    #[test]
+    fn lists_every_registered_root() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        insert_root(&conn, "/a")?;
+        insert_root(&conn, "/b")?;
+
+        // 순서는 보장하지 않으므로 경로만 모아서 비교한다.
+        let mut paths: Vec<String> = list_roots(&conn)?
+            .into_iter()
+            .map(|root| root.local_path)
+            .collect();
+        paths.sort();
+
+        assert_eq!(paths, ["/a", "/b"]);
         Ok(())
     }
 }

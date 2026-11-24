@@ -1,0 +1,233 @@
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    path::Path,
+    sync::Arc,
+};
+
+use rfsync_network::{
+    ClientConfig, Endpoint, NetworkError, QuicConnection, QuicRecvStream, QuicSendStream,
+    accept_stream, open_stream,
+};
+use rfsync_protocol::{Entry, Message, PROTOCOL_VERSION, read_frame, write_frame};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    task::JoinSet,
+    time::sleep,
+};
+use tracing::{debug, info, warn};
+
+use self::backoff::Backoff;
+use super::{
+    compare::compare_index,
+    identity::{Identity, SERVER_NAME},
+    index::load_index,
+};
+use crate::error::EngineError;
+
+mod backoff;
+
+/// 연결에서 이 쪽이 맡은 역할. 연결을 시작한 쪽이 스트림을 열고, 받은 쪽이 스트림을 받는다.
+#[derive(Debug, Clone, Copy)]
+enum SessionRole {
+    Dialer,
+    Acceptor,
+}
+
+pub async fn run(
+    identity: &Identity,
+    port: u16,
+    db_path: &Path,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), EngineError> {
+    let devices = {
+        let conn = rfsync_storage::open(db_path)?;
+        rfsync_storage::list_devices(&conn)?
+    };
+
+    if devices.is_empty() {
+        return Err(EngineError::NoPairedDevices);
+    }
+
+    // 임시: 시작 시점의 목록을 모든 연결에 보낸다. 라이브 변경 반영은 coordinator 도입 때 처리한다.
+    let index = Arc::new(load_index(db_path)?);
+
+    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+    let certs: Vec<&[u8]> = devices.iter().map(|d| d.cert_der.as_slice()).collect();
+    let config = rfsync_network::server_config(&identity.cert, &identity.key, &certs)?;
+
+    let endpoint = rfsync_network::bind_quic(addr, config)?;
+
+    let mut dials = JoinSet::new();
+    for device in &devices {
+        let Some(addr) = device.endpoint.as_deref() else {
+            continue;
+        };
+
+        let Ok(addr) = addr.parse::<SocketAddr>() else {
+            warn!("저장된 주소가 올바르지 않습니다: {addr}");
+            continue;
+        };
+
+        let config =
+            rfsync_network::client_config(&identity.cert, &identity.key, &device.cert_der)?;
+        dials.spawn(dial_loop(endpoint.clone(), addr, config, index.clone()));
+    }
+
+    tokio::select! {
+        _ = shutdown => {}
+        _ = accept_loop(&endpoint, index) => {}
+    }
+    endpoint.close(0u32.into(), b"shutdown");
+    dials.shutdown().await;
+    endpoint.wait_idle().await;
+
+    Ok(())
+}
+
+async fn dial_loop(
+    endpoint: Endpoint,
+    addr: SocketAddr,
+    config: ClientConfig,
+    index: Arc<Vec<Entry>>,
+) {
+    let mut backoff = Backoff::new();
+
+    loop {
+        match rfsync_network::connect_quic(&endpoint, addr, SERVER_NAME, config.clone()).await {
+            Ok(conn) => {
+                backoff.reset();
+                hold_connection(conn, SessionRole::Dialer, index.clone()).await;
+            }
+            Err(e) => warn!("{addr} 연결 실패: {e}"),
+        }
+        sleep(backoff.next_delay()).await;
+    }
+}
+
+async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>) {
+    loop {
+        match rfsync_network::accept_quic(endpoint).await {
+            Ok(conn) => {
+                tokio::spawn(hold_connection(conn, SessionRole::Acceptor, index.clone()));
+            }
+            Err(NetworkError::QuicEndpointClosed) => return,
+            Err(e) => warn!("연결 수락 실패: {e}"),
+        }
+    }
+}
+
+async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec<Entry>>) {
+    debug!("연결 시작: {role:?}, 보낼 파일 목록 {}개", index.len());
+
+    // 핸드셰이크가 끝나도 스트림을 닫지 않고, 연결이 끝날 때까지 쥐고 있는다.
+    let _stream = match handshake(&conn, role, &index).await {
+        Ok((stream, peer)) => {
+            if peer.version != PROTOCOL_VERSION {
+                warn!(
+                    "상대의 프로토콜 버전이 다릅니다: 상대 {}, 나 {PROTOCOL_VERSION}",
+                    peer.version
+                );
+            }
+            info!("상대 파일 목록 {}개를 받았습니다", peer.index.len());
+
+            let comparison = compare_index(&index, &peer.index);
+            info!(
+                "내게 없는 파일 {}개, 내용이 다른 파일 {}개",
+                comparison.missing.len(),
+                comparison.changed.len()
+            );
+            for entry in &comparison.missing {
+                debug!("내게 없는 파일: {}", entry.path);
+            }
+            for entry in &comparison.changed {
+                debug!("내용이 다른 파일: {}", entry.path);
+            }
+            Some(stream)
+        }
+        Err(e) => {
+            warn!("핸드셰이크 실패: {e}");
+            None
+        }
+    };
+
+    let reason = conn.closed().await;
+    info!("연결 종료: {reason}");
+}
+
+/// 연결에서 쓰는 대화 창구. 핸드셰이크 뒤에도 같은 스트림으로 계속 주고받는다.
+struct ControlStream {
+    _send: QuicSendStream,
+    _recv: QuicRecvStream,
+}
+
+/// 상대가 보낸 핸드셰이크 내용.
+struct PeerHandshake {
+    version: u16,
+    index: Vec<Entry>,
+}
+
+/// 연결을 시작한 쪽은 스트림을 열고, 받은 쪽은 스트림을 받아 `Hello`와 파일 목록을 주고받는다.
+async fn handshake(
+    conn: &QuicConnection,
+    role: SessionRole,
+    index: &[Entry],
+) -> Result<(ControlStream, PeerHandshake), EngineError> {
+    let (mut send, mut recv) = match role {
+        SessionRole::Dialer => open_stream(conn).await?,
+        SessionRole::Acceptor => accept_stream(conn).await?,
+    };
+
+    let peer = exchange(&mut send, &mut recv, index).await?;
+    Ok((
+        ControlStream {
+            _send: send,
+            _recv: recv,
+        },
+        peer,
+    ))
+}
+
+/// `Hello`와 파일 목록을 보내는 일과 상대의 것을 받는 일을 동시에 한다.
+/// 둘 다 쓰고 난 뒤에 읽으면 큰 목록에서 서로 상대가 읽기를 기다리다 멈출 수 있기 때문이다.
+async fn exchange(
+    send: &mut (impl AsyncWrite + Unpin),
+    recv: &mut (impl AsyncRead + Unpin),
+    index: &[Entry],
+) -> Result<PeerHandshake, EngineError> {
+    let write = async {
+        write_frame(
+            send,
+            &Message::Hello {
+                version: PROTOCOL_VERSION,
+            },
+        )
+        .await?;
+        write_frame(
+            send,
+            &Message::Index {
+                entries: index.to_vec(),
+            },
+        )
+        .await?;
+        Ok::<(), EngineError>(())
+    };
+
+    let read = async {
+        let Message::Hello { version } = read_frame(recv).await? else {
+            return Err(EngineError::UnexpectedMessage("Hello"));
+        };
+        let Message::Index { entries } = read_frame(recv).await? else {
+            return Err(EngineError::UnexpectedMessage("Index"));
+        };
+        Ok::<PeerHandshake, EngineError>(PeerHandshake {
+            version,
+            index: entries,
+        })
+    };
+
+    let ((), peer) = tokio::try_join!(write, read)?;
+    Ok(peer)
+}
+
+#[cfg(test)]
+mod tests;

@@ -58,4 +58,10 @@ pub enum EngineError {
 
     #[error("정수 변환 오류: {0}")]
     IntegerConversion(#[from] TryFromIntError),
+
+    #[error("올바르지 않은 해시입니다: {0}")]
+    InvalidHash(String),
+
+    #[error("예상하지 못한 메시지입니다: {0}가 와야 합니다")]
+    UnexpectedMessage(&'static str),
 }
