@@ -2,6 +2,7 @@ use std::{
     error::Error,
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -12,10 +13,13 @@ use crate::{error::EngineError, register_root};
 use super::super::diff::calc_diff;
 
 fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
+    // 시각만으로는 병렬로 도는 테스트가 같은 이름을 만들 수 있어 번호표를 섞는다.
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "rfsync-diff-{}-{}",
+        "rfsync-diff-{}-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&path)?;
     Ok(path)
