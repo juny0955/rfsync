@@ -6,6 +6,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Entry {
+    /// 루트 기준 상대 경로. 구분자는 항상 `/`다.
     pub path: String,
     pub size: u64,
     pub hash: [u8; 32],
@@ -22,6 +23,7 @@ pub enum Message {
         entries: Vec<Entry>,
     },
     /// 파일 스트림에서 요청하는 쪽이 처음 보낸다. 파일 하나를 달라는 요청이다.
+    /// `path`는 `Entry.path`와 같은 규칙(루트 기준 상대 경로, `/` 구분자)이며, 받는 쪽이 다시 검증한다.
     FileRequest {
         path: String,
     },
