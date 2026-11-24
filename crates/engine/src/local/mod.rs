@@ -3,9 +3,11 @@
 
 mod path;
 mod root;
+mod serve;
 mod snapshot;
 mod watcher;
 
-pub(crate) use path::resolve_in_root;
+pub(crate) use root::first_root_path;
 pub use root::register_root;
+pub(crate) use serve::open_for_serving;
 pub use watcher::{watch_path, watch_root};

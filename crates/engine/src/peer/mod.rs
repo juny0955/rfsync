@@ -7,7 +7,7 @@ mod index;
 mod pairing;
 mod session;
 
-pub use event::PeerEvent;
+pub use event::{FileOffer, PeerEvent};
 pub use identity::{Identity, load_or_create_identity};
 pub(crate) use index::load_index;
 pub use pairing::{connect, listen};
