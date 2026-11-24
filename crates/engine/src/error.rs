@@ -62,6 +62,9 @@ pub enum EngineError {
     #[error("올바르지 않은 해시입니다: {0}")]
     InvalidHash(String),
 
+    #[error("받은 파일의 해시가 맞지 않습니다: {0}")]
+    HashMismatch(String),
+
     #[error("예상하지 못한 메시지입니다: {0}가 와야 합니다")]
     UnexpectedMessage(&'static str),
 }
