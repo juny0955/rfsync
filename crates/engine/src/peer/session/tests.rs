@@ -364,3 +364,22 @@ async fn keeps_the_connection_open_after_exchanging_hello() -> Result<(), Box<dy
         })
         .await
 }
+
+#[tokio::test]
+async fn starts_and_serves_when_a_root_is_registered() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let root_dir = tempfile::tempdir()?;
+    std::fs::write(root_dir.path().join("a.txt"), "hello")?;
+    crate::register_root(root_dir.path(), &fixture.db_path)?;
+
+    fixture
+        .with_daemon(|| async {
+            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+
+            sleep(Duration::from_millis(300)).await;
+            assert!(conn.close_reason().is_none());
+            Ok(())
+        })
+        .await
+}
