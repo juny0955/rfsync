@@ -6,22 +6,23 @@ use std::{
 
 use rfsync_network::{
     ClientConfig, Endpoint, NetworkError, QuicConnection, QuicRecvStream, QuicSendStream,
-    accept_stream, open_stream,
+    accept_stream,
 };
 use rfsync_protocol::{Entry, Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::AsyncReadExt,
     sync::{mpsc::Sender, oneshot},
     task::JoinSet,
     time::sleep,
 };
 use tracing::{debug, info, warn};
 
-use self::backoff::Backoff;
+use self::{backoff::Backoff, handshake::handshake};
 use super::identity::{Identity, SERVER_NAME};
 use crate::{error::EngineError, peer::PeerEvent};
 
 mod backoff;
+mod handshake;
 
 /// 연결에서 이 쪽이 맡은 역할. 연결을 시작한 쪽이 스트림을 열고, 받은 쪽이 스트림을 받는다.
 #[derive(Debug, Clone, Copy)]
@@ -234,81 +235,6 @@ async fn serve_file_stream(
     }
     let _ = send.finish();
     Ok(())
-}
-
-/// 연결에서 쓰는 대화 창구. 핸드셰이크 뒤에도 같은 스트림으로 계속 주고받는다.
-struct ControlStream {
-    _send: QuicSendStream,
-    _recv: QuicRecvStream,
-}
-
-/// 상대가 보낸 핸드셰이크 내용.
-struct PeerHandshake {
-    version: u16,
-    index: Vec<Entry>,
-}
-
-/// 연결을 시작한 쪽은 스트림을 열고, 받은 쪽은 스트림을 받아 `Hello`와 파일 목록을 주고받는다.
-async fn handshake(
-    conn: &QuicConnection,
-    role: SessionRole,
-    index: &[Entry],
-) -> Result<(ControlStream, PeerHandshake), EngineError> {
-    let (mut send, mut recv) = match role {
-        SessionRole::Dialer => open_stream(conn).await?,
-        SessionRole::Acceptor => accept_stream(conn).await?,
-    };
-
-    let peer = exchange(&mut send, &mut recv, index).await?;
-    Ok((
-        ControlStream {
-            _send: send,
-            _recv: recv,
-        },
-        peer,
-    ))
-}
-
-/// `Hello`와 파일 목록을 보내는 일과 상대의 것을 받는 일을 동시에 한다.
-/// 둘 다 쓰고 난 뒤에 읽으면 큰 목록에서 서로 상대가 읽기를 기다리다 멈출 수 있기 때문이다.
-async fn exchange(
-    send: &mut (impl AsyncWrite + Unpin),
-    recv: &mut (impl AsyncRead + Unpin),
-    index: &[Entry],
-) -> Result<PeerHandshake, EngineError> {
-    let write = async {
-        write_frame(
-            send,
-            &Message::Hello {
-                version: PROTOCOL_VERSION,
-            },
-        )
-        .await?;
-        write_frame(
-            send,
-            &Message::Index {
-                entries: index.to_vec(),
-            },
-        )
-        .await?;
-        Ok::<(), EngineError>(())
-    };
-
-    let read = async {
-        let Message::Hello { version } = read_frame(recv).await? else {
-            return Err(EngineError::UnexpectedMessage("Hello"));
-        };
-        let Message::Index { entries } = read_frame(recv).await? else {
-            return Err(EngineError::UnexpectedMessage("Index"));
-        };
-        Ok::<PeerHandshake, EngineError>(PeerHandshake {
-            version,
-            index: entries,
-        })
-    };
-
-    let ((), peer) = tokio::try_join!(write, read)?;
-    Ok(peer)
 }
 
 #[cfg(test)]

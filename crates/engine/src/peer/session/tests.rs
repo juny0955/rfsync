@@ -6,13 +6,17 @@ use std::{
     time::Duration,
 };
 
-use rfsync_network::{Endpoint, QuicConnection, generate_certificate};
+use rfsync_network::{Endpoint, QuicConnection, generate_certificate, open_stream};
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
     time::{sleep, timeout},
 };
 
-use super::*;
+use super::{
+    handshake::{PeerHandshake, exchange},
+    *,
+};
 use crate::peer::{FileOffer, identity::SERVER_NAME, load_index};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
