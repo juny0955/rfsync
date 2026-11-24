@@ -15,8 +15,23 @@ pub struct Entry {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum Message {
-    Hello { version: u16 },
-    Index { entries: Vec<Entry> },
+    Hello {
+        version: u16,
+    },
+    Index {
+        entries: Vec<Entry>,
+    },
+    /// 파일 스트림에서 요청하는 쪽이 처음 보낸다. 파일 하나를 달라는 요청이다.
+    FileRequest {
+        path: String,
+    },
+    /// 요청한 파일이 있다. 이 프레임 바로 뒤에 `size` 바이트의 파일 내용이 프레임 없이 이어진다.
+    FileFound {
+        size: u64,
+        hash: [u8; 32],
+    },
+    /// 요청한 파일이 없다. 뒤에 이어지는 내용은 없다.
+    FileNotFound,
 }
 
 pub fn encode(msg: &Message) -> Result<Vec<u8>, ProtocolError> {
@@ -60,6 +75,33 @@ mod tests {
         };
         let bytes = encode(&msg).unwrap();
         assert_eq!(decode(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn 파일_요청을_바이트로_바꿨다_되돌리면_같다() {
+        let msg = Message::FileRequest {
+            path: "sub/한글.txt".to_string(),
+        };
+        let bytes = encode(&msg).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn 파일_응답을_바이트로_바꿨다_되돌리면_같다() {
+        let found = Message::FileFound {
+            size: u64::MAX,
+            hash: [7u8; 32],
+        };
+        let not_found = Message::FileNotFound;
+        assert_eq!(decode(&encode(&found).unwrap()).unwrap(), found);
+        assert_eq!(decode(&encode(&not_found).unwrap()).unwrap(), not_found);
+    }
+
+    #[test]
+    fn 기존_메시지의_바이트_표현은_변형을_추가해도_그대로다() {
+        // 변형은 순서 번호로 직렬화되므로 새 변형은 뒤에만 추가해야 한다. 앞 번호가 밀리지 않는지 확인한다.
+        assert_eq!(encode(&Message::Hello { version: 1 }).unwrap(), [0, 1]);
+        assert_eq!(encode(&Message::Index { entries: vec![] }).unwrap(), [1, 0]);
     }
 
     #[test]
