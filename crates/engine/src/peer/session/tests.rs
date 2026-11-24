@@ -48,6 +48,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Result<Self, Box<dyn Error>> {
+        logs(); // 어떤 세션 테스트보다 먼저 로그 구독자를 설치한다
         let dir = tempfile::tempdir()?;
         let port = free_port();
         Ok(Self {
@@ -612,7 +613,8 @@ impl LogBuffer {
 
     /// 원하는 문구가 로그에 나올 때까지 기다린다. 나오지 않으면 지금까지의 로그와 함께 실패한다.
     async fn wait_for(&self, text: &str) {
-        let found = timeout(TIMEOUT, async {
+        // 바깥의 TIMEOUT보다 짧게 잡아야 실패했을 때 지금까지의 로그가 메시지로 보인다.
+        let found = timeout(TIMEOUT / 2, async {
             while !self.contents().contains(text) {
                 sleep(Duration::from_millis(20)).await;
             }
@@ -645,15 +647,24 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
     }
 }
 
-/// 이 테스트가 끝날 때까지 현재 스레드의 로그를 버퍼로 보낸다. 테스트 런타임은 단일 스레드라 데몬의 작업도 잡힌다.
-fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
-    let logs = LogBuffer::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(logs.clone())
-        .with_ansi(false)
-        .with_max_level(tracing::Level::DEBUG)
-        .finish();
-    (logs, tracing::subscriber::set_default(subscriber))
+static LOGS: std::sync::OnceLock<LogBuffer> = std::sync::OnceLock::new();
+
+/// 프로세스 전체가 하나의 로그 버퍼를 쓴다. 모든 세션 테스트가 `Fixture::new`에서 이 함수를 먼저 부르므로
+/// 어떤 로그 지점도 구독자 없이 처음 실행되지 않는다. (테스트마다 현재 스레드에만 구독자를 걸면, 다른 테스트가
+/// 병렬로 같은 로그 지점을 실행하는 순간과 겹쳐 INFO 로그를 놓치는 일이 있었다.)
+/// 버퍼는 테스트들이 공유하므로 각 테스트는 자기만의 문구로 찾는다.
+fn logs() -> &'static LogBuffer {
+    LOGS.get_or_init(|| {
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("테스트 프로세스에서 전역 구독자는 한 번만 설치한다");
+        logs
+    })
 }
 
 #[tokio::test]
@@ -662,12 +673,12 @@ async fn compares_the_peers_index_with_its_own_after_the_handshake() -> Result<(
     fixture.pair_peer()?;
     // 내 목록: a.txt("hello"), sub/b.txt("world")
     let (_root, _) = register_root_with_files(&fixture)?;
-    let (logs, _guard) = capture_logs();
+    let logs = logs();
 
     // 상대 목록: a.txt는 같고, sub/b.txt는 내용이 다르고, new.txt는 내게 없다.
     let mut same = entry("a.txt");
     same.hash = *blake3::hash(b"hello").as_bytes();
-    let peer_index = vec![same, entry("sub/b.txt"), entry("new.txt")];
+    let peer_index = vec![same, entry("sub/b.txt"), entry("c4-only-on-peer.txt")];
 
     fixture
         .with_daemon(|| async {
@@ -683,7 +694,7 @@ async fn compares_the_peers_index_with_its_own_after_the_handshake() -> Result<(
         .await?;
 
     let log = logs.contents();
-    assert!(log.contains("내게 없는 파일: new.txt"), "{log}");
+    assert!(log.contains("내게 없는 파일: c4-only-on-peer.txt"), "{log}");
     assert!(log.contains("내용이 다른 파일: sub/b.txt"), "{log}");
     assert!(!log.contains("내게 없는 파일: a.txt"), "{log}");
     Ok(())
