@@ -12,8 +12,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     error::EngineError,
-    local::{first_root_path, open_for_serving},
-    peer::{self, FileOffer, Identity, PeerEvent, load_index},
+    local::{first_root_path, open_for_serving, save_received_file},
+    peer::{self, FileOffer, Identity, PeerEvent, PeerHandle, load_index},
     sync::compare::{IndexComparison, compare_index},
 };
 
@@ -46,9 +46,17 @@ async fn run_coordinator(
     while let Some(event) = events.recv().await {
         match event {
             PeerEvent::IndexReceived {
-                index: peer_index, ..
+                index: peer_index,
+                peer,
             } => {
-                on_index_received(&index, &peer_index);
+                let comparison = on_index_received(&index, &peer_index);
+                match root.clone() {
+                    // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
+                    Some(root) => {
+                        tokio::spawn(fetch_missing(peer, root, comparison.missing));
+                    }
+                    None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
+                }
             }
             PeerEvent::FileRequested { path, reply } => {
                 // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
@@ -91,6 +99,67 @@ async fn serve_file(root: Option<PathBuf>, requested: String) -> Option<FileOffe
         hash: served.hash,
         file: File::from_std(served.file),
     })
+}
+
+/// 내게 없는 파일을 상대에게서 하나씩 받아 온다. 한 파일이 실패해도 나머지는 계속 받는다.
+///
+/// 파일마다 새 스트림을 쓰므로 동시에 받을 수도 있지만, 지금은 순서대로 하나씩 받는다.
+async fn fetch_missing(peer: PeerHandle, root: PathBuf, missing: Vec<Entry>) {
+    for entry in &missing {
+        match fetch_file(&peer, &root, entry).await {
+            Ok(FetchOutcome::Saved) => info!("파일을 받았습니다: {}", entry.path),
+            Ok(FetchOutcome::MissingOnPeer) => {
+                warn!("상대에게 파일이 없습니다: {}", entry.path)
+            }
+            Ok(FetchOutcome::ChangedOnPeer) => {
+                warn!(
+                    "목록을 받은 뒤 상대의 파일이 바뀌어 받지 않습니다: {}",
+                    entry.path
+                )
+            }
+            Err(e) => warn!("파일을 받지 못했습니다: {}: {e}", entry.path),
+        }
+    }
+}
+
+/// 파일 하나를 받으려던 결과.
+#[derive(Debug, PartialEq)]
+enum FetchOutcome {
+    Saved,
+    /// 목록에는 있었는데 요청하니 상대가 없다고 답했다.
+    MissingOnPeer,
+    /// 상대가 알려 준 크기나 해시가 목록의 값과 달라, 목록을 받은 뒤 파일이 바뀐 것이다.
+    ChangedOnPeer,
+}
+
+/// 파일 하나를 요청하고, 응답 헤더가 목록의 값과 같을 때만 내용을 받아 저장한다.
+async fn fetch_file(
+    peer: &PeerHandle,
+    root: &Path,
+    entry: &Entry,
+) -> Result<FetchOutcome, EngineError> {
+    let Some(mut download) = peer.request_file(&entry.path).await? else {
+        return Ok(FetchOutcome::MissingOnPeer);
+    };
+    if !matches_entry(entry, download.size, &download.hash) {
+        // 내용을 읽지 않고 스트림을 버린다. 상대는 전송이 중단됐다는 경고를 남긴다.
+        return Ok(FetchOutcome::ChangedOnPeer);
+    }
+
+    save_received_file(
+        root,
+        &entry.path,
+        download.size,
+        download.hash,
+        &mut download.reader,
+    )
+    .await?;
+    Ok(FetchOutcome::Saved)
+}
+
+/// 응답 헤더의 크기와 해시가 상대가 보낸 목록의 항목과 같은가.
+fn matches_entry(entry: &Entry, size: u64, hash: &[u8; 32]) -> bool {
+    entry.size == size && entry.hash == *hash
 }
 
 fn on_index_received(mine: &[Entry], theirs: &[Entry]) -> IndexComparison {
@@ -181,6 +250,15 @@ mod tests {
         assert!(request(root.clone(), "missing.txt").await.is_none());
         assert!(request(root.clone(), "../a.txt").await.is_none());
         assert!(request(root, "/etc/passwd").await.is_none());
+    }
+
+    #[test]
+    fn 응답_헤더가_목록의_크기와_해시와_같을_때만_일치한다() {
+        let listed = entry("a.txt", 1); // 크기 1, 해시 [1; 32]
+
+        assert!(matches_entry(&listed, 1, &[1; 32]));
+        assert!(!matches_entry(&listed, 2, &[1; 32]), "크기가 다르다");
+        assert!(!matches_entry(&listed, 1, &[2; 32]), "해시가 다르다");
     }
 
     #[tokio::test]

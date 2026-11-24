@@ -9,7 +9,7 @@ mod pairing;
 mod session;
 
 pub use event::{FileOffer, PeerEvent};
-pub use handle::{FileDownload, PeerHandle};
+pub use handle::PeerHandle;
 pub use identity::{Identity, load_or_create_identity};
 pub(crate) use index::load_index;
 pub use pairing::{connect, listen};
