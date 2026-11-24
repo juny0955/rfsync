@@ -6,14 +6,18 @@ use std::{
     time::Duration,
 };
 
-use rfsync_network::{Endpoint, QuicConnection, generate_certificate};
+use rfsync_network::{Endpoint, QuicConnection, generate_certificate, open_stream};
 use tokio::{
-    sync::oneshot,
+    io::{AsyncRead, AsyncWrite},
+    sync::{mpsc, oneshot},
     time::{sleep, timeout},
 };
 
-use super::*;
-use crate::peer::identity::SERVER_NAME;
+use super::{
+    handshake::{PeerHandshake, exchange},
+    *,
+};
+use crate::peer::{FileOffer, PeerHandle, identity::SERVER_NAME, load_index};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -67,11 +71,27 @@ impl Fixture {
         Ok(())
     }
 
-    fn run(
+    async fn run(&self, shutdown: impl Future<Output = ()>) -> Result<(), EngineError> {
+        let (events, _rx) = mpsc::channel(8);
+        self.run_with(events, shutdown).await
+    }
+
+    /// 데몬의 세션을 주어진 이벤트 송신구로 실행한다. 이벤트를 받아 줄 쪽은 테스트가 맡는다.
+    async fn run_with(
         &self,
+        events: mpsc::Sender<PeerEvent>,
         shutdown: impl Future<Output = ()>,
-    ) -> impl Future<Output = Result<(), EngineError>> {
-        run(&self.daemon, self.port, &self.db_path, shutdown)
+    ) -> Result<(), EngineError> {
+        let index = load_index(&self.db_path)?;
+        run(
+            &self.daemon,
+            self.port,
+            &self.db_path,
+            index,
+            events,
+            shutdown,
+        )
+        .await
     }
 
     /// 주어진 신원으로 데몬에 접속한다. 엔드포인트도 연결이 살아 있는 동안 유지해야 한다.
@@ -116,6 +136,20 @@ impl Fixture {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(), Box<dyn Error>>>,
     {
+        let (events, _rx) = mpsc::channel(8);
+        self.with_daemon_events(events, scenario).await
+    }
+
+    /// `with_daemon`과 같지만 세션이 보내는 이벤트를 주어진 송신구로 받는다.
+    async fn with_daemon_events<F, Fut>(
+        &self,
+        events: mpsc::Sender<PeerEvent>,
+        scenario: F,
+    ) -> Result<(), Box<dyn Error>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(), Box<dyn Error>>>,
+    {
         let (stop, stopped) = oneshot::channel::<()>();
         let scenario = async {
             let result = scenario().await;
@@ -124,7 +158,7 @@ impl Fixture {
         };
         let (daemon, scenario) = timeout(TIMEOUT, async {
             tokio::join!(
-                self.run(async {
+                self.run_with(events, async {
                     let _ = stopped.await;
                 }),
                 scenario
@@ -667,35 +701,336 @@ fn logs() -> &'static LogBuffer {
     })
 }
 
+/// coordinator 역할을 대신하는 테스트용 파일 서버. `dir` 안의 파일을 요청받은 이름 그대로 열어 주고,
+/// 없으면 `None`으로 답한다. 반환하는 송신구를 세션에 넘긴다.
+fn spawn_file_server(dir: PathBuf) -> mpsc::Sender<PeerEvent> {
+    let (events, mut requests) = mpsc::channel(8);
+    tokio::spawn(async move {
+        while let Some(event) = requests.recv().await {
+            let PeerEvent::FileRequested { path, reply } = event else {
+                continue;
+            };
+            let offer = match std::fs::read(dir.join(&path)) {
+                Ok(bytes) => Some(FileOffer {
+                    size: bytes.len() as u64,
+                    hash: *blake3::hash(&bytes).as_bytes(),
+                    file: tokio::fs::File::open(dir.join(&path)).await.unwrap(),
+                }),
+                Err(_) => None,
+            };
+            let _ = reply.send(offer);
+        }
+    });
+    events
+}
+
+/// 상대 쪽에서 데몬과 핸드셰이크를 마치고, 파일 요청용 새 스트림을 열어 `path`를 요청한다.
+/// 응답 헤더와, 헤더 뒤에 이어진 모든 바이트를 돌려준다. 연결은 호출한 쪽이 유지해야 한다.
+async fn request_file(
+    conn: &QuicConnection,
+    path: &str,
+) -> Result<(Message, Vec<u8>), Box<dyn Error>> {
+    let (mut send, mut recv) = open_stream(conn).await?;
+    write_handshake(&mut send).await?;
+    read_handshake(&mut recv).await?;
+
+    let (mut file_send, mut file_recv) = open_stream(conn).await?;
+    write_frame(
+        &mut file_send,
+        &Message::FileRequest {
+            path: path.to_owned(),
+        },
+    )
+    .await?;
+
+    let header = timeout(TIMEOUT, read_frame(&mut file_recv)).await??;
+    // 데몬이 스트림을 끝낼 때까지 읽는다. 상한은 테스트 파일보다 넉넉하게 잡는다.
+    let body = timeout(TIMEOUT, file_recv.read_to_end(16 * 1024 * 1024)).await??;
+    Ok((header, body))
+}
+
 #[tokio::test]
-async fn compares_the_peers_index_with_its_own_after_the_handshake() -> Result<(), Box<dyn Error>> {
+async fn answers_a_file_request_with_header_and_raw_content() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
-    // 내 목록: a.txt("hello"), sub/b.txt("world")
-    let (_root, _) = register_root_with_files(&fixture)?;
-    let logs = logs();
-
-    // 상대 목록: a.txt는 같고, sub/b.txt는 내용이 다르고, new.txt는 내게 없다.
-    let mut same = entry("a.txt");
-    same.hash = *blake3::hash(b"hello").as_bytes();
-    let peer_index = vec![same, entry("sub/b.txt"), entry("c4-only-on-peer.txt")];
+    let served = tempfile::tempdir()?;
+    std::fs::create_dir(served.path().join("sub"))?;
+    std::fs::write(served.path().join("sub/a.txt"), "hello")?;
+    let events = spawn_file_server(served.path().to_owned());
 
     fixture
-        .with_daemon(|| async {
+        .with_daemon_events(events, || async {
             let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
-            let (mut send, _recv) = open_stream(&conn).await?;
-            write_frame(&mut send, &hello()).await?;
-            write_frame(&mut send, &index_message(peer_index)).await?;
 
-            logs.wait_for("내게 없는 파일 1개, 내용이 다른 파일 1개")
-                .await;
+            let (header, body) = request_file(&conn, "sub/a.txt").await?;
+
+            assert_eq!(
+                header,
+                Message::FileFound {
+                    size: 5,
+                    hash: *blake3::hash(b"hello").as_bytes(),
+                }
+            );
+            assert_eq!(body, b"hello");
             Ok(())
         })
-        .await?;
+        .await
+}
 
-    let log = logs.contents();
-    assert!(log.contains("내게 없는 파일: c4-only-on-peer.txt"), "{log}");
-    assert!(log.contains("내용이 다른 파일: sub/b.txt"), "{log}");
-    assert!(!log.contains("내게 없는 파일: a.txt"), "{log}");
-    Ok(())
+#[tokio::test]
+async fn sends_content_larger_than_the_frame_limit_as_raw_bytes() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let served = tempfile::tempdir()?;
+    // 프레임 상한(1 MiB)보다 큰 3 MiB. 바이트마다 값이 달라야 순서가 틀리면 드러난다.
+    let content: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    std::fs::write(served.path().join("big.bin"), &content)?;
+    let events = spawn_file_server(served.path().to_owned());
+
+    fixture
+        .with_daemon_events(events, || async {
+            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+
+            let (header, body) = request_file(&conn, "big.bin").await?;
+
+            assert_eq!(
+                header,
+                Message::FileFound {
+                    size: content.len() as u64,
+                    hash: *blake3::hash(&content).as_bytes(),
+                }
+            );
+            assert!(body == content, "받은 내용이 원본과 다르다");
+            Ok(())
+        })
+        .await
+}
+
+#[tokio::test]
+async fn answers_not_found_when_the_coordinator_has_no_such_file() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let served = tempfile::tempdir()?;
+    let events = spawn_file_server(served.path().to_owned());
+
+    fixture
+        .with_daemon_events(events, || async {
+            let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+
+            let (header, body) = request_file(&conn, "missing.txt").await?;
+
+            assert_eq!(header, Message::FileNotFound);
+            assert!(body.is_empty());
+            Ok(())
+        })
+        .await
+}
+
+/// 상대 피어가 데몬에 접속해 핸드셰이크를 마친 모습. 연결을 쥐고 있는 동안 데몬 쪽 세션이 살아 있다.
+struct HandshakenPeer {
+    _endpoint: Endpoint,
+    conn: QuicConnection,
+    /// 데몬이 `IndexReceived`로 넘겨 준, 이 연결에 파일을 요청하는 손잡이.
+    handle: PeerHandle,
+    _control: (QuicSendStream, QuicRecvStream),
+}
+
+/// 상대 피어로 데몬에 접속해 핸드셰이크를 마치고, 데몬이 보낸 `IndexReceived`에서 손잡이를 꺼낸다.
+async fn handshake_with_daemon(
+    fixture: &Fixture,
+    received: &mut mpsc::Receiver<PeerEvent>,
+) -> Result<HandshakenPeer, Box<dyn Error>> {
+    let (endpoint, conn) = fixture.connect(&fixture.peer).await?;
+    let (mut send, mut recv) = open_stream(&conn).await?;
+    write_handshake(&mut send).await?;
+    read_handshake(&mut recv).await?;
+
+    let event = timeout(TIMEOUT, received.recv())
+        .await?
+        .ok_or("이벤트 통로가 닫혔다")?;
+    let PeerEvent::IndexReceived { peer: handle, .. } = event else {
+        return Err("IndexReceived가 아니다".into());
+    };
+    Ok(HandshakenPeer {
+        _endpoint: endpoint,
+        conn,
+        handle,
+        _control: (send, recv),
+    })
+}
+
+/// 상대 피어 쪽에서 데몬이 연 스트림을 받아 첫 프레임(`FileRequest`)을 읽고,
+/// 보낼 응답을 `respond`가 쓰게 한다.
+async fn answer_request<F, Fut>(
+    conn: &QuicConnection,
+    expected_path: &str,
+    respond: F,
+) -> Result<(), Box<dyn Error>>
+where
+    F: FnOnce(QuicSendStream) -> Fut,
+    Fut: Future<Output = Result<(), Box<dyn Error>>>,
+{
+    let (send, mut recv) = timeout(TIMEOUT, accept_stream(conn)).await??;
+    let request = timeout(TIMEOUT, read_frame(&mut recv)).await??;
+    assert_eq!(
+        request,
+        Message::FileRequest {
+            path: expected_path.to_owned()
+        }
+    );
+    respond(send).await
+}
+
+#[tokio::test]
+async fn requests_a_file_from_the_peer_through_the_handle() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let (events, mut received) = mpsc::channel(8);
+
+    fixture
+        .with_daemon_events(events, || async {
+            let peer = handshake_with_daemon(&fixture, &mut received).await?;
+
+            let serve = answer_request(&peer.conn, "sub/a.txt", |mut send| async move {
+                write_frame(
+                    &mut send,
+                    &Message::FileFound {
+                        size: 5,
+                        hash: *blake3::hash(b"hello").as_bytes(),
+                    },
+                )
+                .await?;
+                send.write_all(b"hello").await?;
+                send.finish()?;
+                Ok(())
+            });
+            let request = async {
+                let mut download = timeout(TIMEOUT, peer.handle.request_file("sub/a.txt"))
+                    .await??
+                    .ok_or("파일이 없다고 답했다")?;
+                assert_eq!(download.size, 5);
+                assert_eq!(download.hash, *blake3::hash(b"hello").as_bytes());
+                let content = timeout(TIMEOUT, download.reader.read_to_end(1024)).await??;
+                assert_eq!(content, b"hello");
+                Ok::<(), Box<dyn Error>>(())
+            };
+
+            let (served, requested) = tokio::join!(serve, request);
+            served?;
+            requested
+        })
+        .await
+}
+
+#[tokio::test]
+async fn returns_none_when_the_peer_does_not_have_the_file() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let (events, mut received) = mpsc::channel(8);
+
+    fixture
+        .with_daemon_events(events, || async {
+            let peer = handshake_with_daemon(&fixture, &mut received).await?;
+
+            let serve = answer_request(&peer.conn, "missing.txt", |mut send| async move {
+                write_frame(&mut send, &Message::FileNotFound).await?;
+                send.finish()?;
+                Ok(())
+            });
+            let request = async {
+                let download = timeout(TIMEOUT, peer.handle.request_file("missing.txt")).await??;
+                assert!(download.is_none());
+                Ok::<(), Box<dyn Error>>(())
+            };
+
+            let (served, requested) = tokio::join!(serve, request);
+            served?;
+            requested
+        })
+        .await
+}
+
+#[tokio::test]
+async fn fails_when_the_peer_answers_with_an_unexpected_message() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let (events, mut received) = mpsc::channel(8);
+
+    fixture
+        .with_daemon_events(events, || async {
+            let peer = handshake_with_daemon(&fixture, &mut received).await?;
+
+            let serve = answer_request(&peer.conn, "a.txt", |mut send| async move {
+                write_frame(&mut send, &hello()).await?;
+                send.finish()?;
+                Ok(())
+            });
+            let request = async {
+                let result = timeout(TIMEOUT, peer.handle.request_file("a.txt")).await?;
+                assert!(matches!(result, Err(EngineError::UnexpectedMessage(_))));
+                Ok::<(), Box<dyn Error>>(())
+            };
+
+            let (served, requested) = tokio::join!(serve, request);
+            served?;
+            requested
+        })
+        .await
+}
+
+#[tokio::test]
+async fn gives_each_request_its_own_stream_so_downloads_can_overlap() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let (events, mut received) = mpsc::channel(8);
+
+    fixture
+        .with_daemon_events(events, || async {
+            let peer = handshake_with_daemon(&fixture, &mut received).await?;
+
+            // 상대는 두 요청을 모두 받은 뒤에야 답한다. 요청마다 스트림이 따로여야 둘 다 도착한다.
+            let serve = async {
+                let mut pending = Vec::new();
+                for _ in 0..2 {
+                    let (send, mut recv) = timeout(TIMEOUT, accept_stream(&peer.conn)).await??;
+                    let Message::FileRequest { path } =
+                        timeout(TIMEOUT, read_frame(&mut recv)).await??
+                    else {
+                        return Err::<(), Box<dyn Error>>("FileRequest가 아니다".into());
+                    };
+                    pending.push((send, path));
+                }
+                for (mut send, path) in pending {
+                    write_frame(
+                        &mut send,
+                        &Message::FileFound {
+                            size: path.len() as u64,
+                            hash: *blake3::hash(path.as_bytes()).as_bytes(),
+                        },
+                    )
+                    .await?;
+                    send.write_all(path.as_bytes()).await?;
+                    send.finish()?;
+                }
+                Ok(())
+            };
+            let fetch = |path: &'static str| {
+                let handle = peer.handle.clone();
+                async move {
+                    let mut download = timeout(TIMEOUT, handle.request_file(path))
+                        .await??
+                        .ok_or("파일이 없다고 답했다")?;
+                    let content = timeout(TIMEOUT, download.reader.read_to_end(1024)).await??;
+                    assert_eq!(content, path.as_bytes());
+                    Ok::<(), Box<dyn Error>>(())
+                }
+            };
+
+            let (served, first, second) = tokio::join!(serve, fetch("one.txt"), fetch("two.txt"));
+            served?;
+            first?;
+            second
+        })
+        .await
 }

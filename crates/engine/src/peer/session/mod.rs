@@ -6,25 +6,26 @@ use std::{
 
 use rfsync_network::{
     ClientConfig, Endpoint, NetworkError, QuicConnection, QuicRecvStream, QuicSendStream,
-    accept_stream, open_stream,
+    accept_stream,
 };
 use rfsync_protocol::{Entry, Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::AsyncReadExt,
+    sync::{mpsc::Sender, oneshot},
     task::JoinSet,
     time::sleep,
 };
 use tracing::{debug, info, warn};
 
-use self::backoff::Backoff;
-use super::{
-    compare::compare_index,
-    identity::{Identity, SERVER_NAME},
-    index::load_index,
+use self::{backoff::Backoff, handshake::handshake};
+use super::identity::{Identity, SERVER_NAME};
+use crate::{
+    error::EngineError,
+    peer::{PeerEvent, PeerHandle},
 };
-use crate::error::EngineError;
 
 mod backoff;
+mod handshake;
 
 /// 연결에서 이 쪽이 맡은 역할. 연결을 시작한 쪽이 스트림을 열고, 받은 쪽이 스트림을 받는다.
 #[derive(Debug, Clone, Copy)]
@@ -37,6 +38,8 @@ pub async fn run(
     identity: &Identity,
     port: u16,
     db_path: &Path,
+    index: Vec<Entry>,
+    events: Sender<PeerEvent>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), EngineError> {
     let devices = {
@@ -48,8 +51,8 @@ pub async fn run(
         return Err(EngineError::NoPairedDevices);
     }
 
-    // 임시: 시작 시점의 목록을 모든 연결에 보낸다. 라이브 변경 반영은 coordinator 도입 때 처리한다.
-    let index = Arc::new(load_index(db_path)?);
+    // 임시: 시작 시점의 목록을 모든 연결에 보낸다. 라이브 변경 반영은 증분 전송 단계에서 처리한다.
+    let index = Arc::new(index);
 
     let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let certs: Vec<&[u8]> = devices.iter().map(|d| d.cert_der.as_slice()).collect();
@@ -70,12 +73,18 @@ pub async fn run(
 
         let config =
             rfsync_network::client_config(&identity.cert, &identity.key, &device.cert_der)?;
-        dials.spawn(dial_loop(endpoint.clone(), addr, config, index.clone()));
+        dials.spawn(dial_loop(
+            endpoint.clone(),
+            addr,
+            config,
+            index.clone(),
+            events.clone(),
+        ));
     }
 
     tokio::select! {
         _ = shutdown => {}
-        _ = accept_loop(&endpoint, index) => {}
+        _ = accept_loop(&endpoint, index, events.clone()) => {}
     }
     endpoint.close(0u32.into(), b"shutdown");
     dials.shutdown().await;
@@ -89,6 +98,7 @@ async fn dial_loop(
     addr: SocketAddr,
     config: ClientConfig,
     index: Arc<Vec<Entry>>,
+    events: Sender<PeerEvent>,
 ) {
     let mut backoff = Backoff::new();
 
@@ -96,7 +106,7 @@ async fn dial_loop(
         match rfsync_network::connect_quic(&endpoint, addr, SERVER_NAME, config.clone()).await {
             Ok(conn) => {
                 backoff.reset();
-                hold_connection(conn, SessionRole::Dialer, index.clone()).await;
+                hold_connection(conn, SessionRole::Dialer, index.clone(), events.clone()).await;
             }
             Err(e) => warn!("{addr} 연결 실패: {e}"),
         }
@@ -104,11 +114,16 @@ async fn dial_loop(
     }
 }
 
-async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>) {
+async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>, events: Sender<PeerEvent>) {
     loop {
         match rfsync_network::accept_quic(endpoint).await {
             Ok(conn) => {
-                tokio::spawn(hold_connection(conn, SessionRole::Acceptor, index.clone()));
+                tokio::spawn(hold_connection(
+                    conn,
+                    SessionRole::Acceptor,
+                    index.clone(),
+                    events.clone(),
+                ));
             }
             Err(NetworkError::QuicEndpointClosed) => return,
             Err(e) => warn!("연결 수락 실패: {e}"),
@@ -116,10 +131,16 @@ async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>) {
     }
 }
 
-async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec<Entry>>) {
+async fn hold_connection(
+    conn: QuicConnection,
+    role: SessionRole,
+    index: Arc<Vec<Entry>>,
+    events: Sender<PeerEvent>,
+) {
     debug!("연결 시작: {role:?}, 보낼 파일 목록 {}개", index.len());
 
     // 핸드셰이크가 끝나도 스트림을 닫지 않고, 연결이 끝날 때까지 쥐고 있는다.
+    let mut serving = None;
     let _stream = match handshake(&conn, role, &index).await {
         Ok((stream, peer)) => {
             if peer.version != PROTOCOL_VERSION {
@@ -130,18 +151,19 @@ async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec
             }
             info!("상대 파일 목록 {}개를 받았습니다", peer.index.len());
 
-            let comparison = compare_index(&index, &peer.index);
-            info!(
-                "내게 없는 파일 {}개, 내용이 다른 파일 {}개",
-                comparison.missing.len(),
-                comparison.changed.len()
-            );
-            for entry in &comparison.missing {
-                debug!("내게 없는 파일: {}", entry.path);
+            if events
+                .send(PeerEvent::IndexReceived {
+                    index: peer.index.clone(),
+                    peer: PeerHandle::new(conn.clone()),
+                })
+                .await
+                .is_err()
+            {
+                warn!("coordinator가 닫혀 있어 상대 목록을 전달하지 못하였습니다");
             }
-            for entry in &comparison.changed {
-                debug!("내용이 다른 파일: {}", entry.path);
-            }
+
+            // 핸드셰이크가 끝난 연결에서만 상대의 파일 요청을 받는다.
+            serving = Some(tokio::spawn(serve_requests(conn.clone(), events.clone())));
             Some(stream)
         }
         Err(e) => {
@@ -152,81 +174,71 @@ async fn hold_connection(conn: QuicConnection, role: SessionRole, index: Arc<Vec
 
     let reason = conn.closed().await;
     info!("연결 종료: {reason}");
+    if let Some(serving) = serving {
+        serving.abort();
+    }
 }
 
-/// 연결에서 쓰는 대화 창구. 핸드셰이크 뒤에도 같은 스트림으로 계속 주고받는다.
-struct ControlStream {
-    _send: QuicSendStream,
-    _recv: QuicRecvStream,
+/// 상대가 여는 스트림을 연결이 끝날 때까지 받는다. 스트림 하나는 파일 하나의 요청이다.
+async fn serve_requests(conn: QuicConnection, events: Sender<PeerEvent>) {
+    while let Ok((send, recv)) = accept_stream(&conn).await {
+        let events = events.clone();
+        tokio::spawn(async move {
+            if let Err(e) = serve_file_stream(send, recv, events).await {
+                warn!("파일 요청 처리 실패: {e}");
+            }
+        });
+    }
 }
 
-/// 상대가 보낸 핸드셰이크 내용.
-struct PeerHandshake {
-    version: u16,
-    index: Vec<Entry>,
-}
-
-/// 연결을 시작한 쪽은 스트림을 열고, 받은 쪽은 스트림을 받아 `Hello`와 파일 목록을 주고받는다.
-async fn handshake(
-    conn: &QuicConnection,
-    role: SessionRole,
-    index: &[Entry],
-) -> Result<(ControlStream, PeerHandshake), EngineError> {
-    let (mut send, mut recv) = match role {
-        SessionRole::Dialer => open_stream(conn).await?,
-        SessionRole::Acceptor => accept_stream(conn).await?,
+/// 파일 스트림 하나를 처리한다. `FileRequest`를 읽고 coordinator에게 파일을 받아,
+/// 있으면 `FileFound` 헤더 뒤에 파일 내용을 프레임 없이 이어 보내고 없으면 `FileNotFound`를 보낸다.
+async fn serve_file_stream(
+    mut send: QuicSendStream,
+    mut recv: QuicRecvStream,
+    events: Sender<PeerEvent>,
+) -> Result<(), EngineError> {
+    let Message::FileRequest { path } = read_frame(&mut recv).await? else {
+        return Err(EngineError::UnexpectedMessage("FileRequest"));
     };
 
-    let peer = exchange(&mut send, &mut recv, index).await?;
-    Ok((
-        ControlStream {
-            _send: send,
-            _recv: recv,
+    let (reply, answer) = oneshot::channel();
+    let offer = if events
+        .send(PeerEvent::FileRequested { path, reply })
+        .await
+        .is_ok()
+    {
+        // coordinator가 답하지 않고 끝났다면 없는 파일처럼 다룬다.
+        answer.await.ok().flatten()
+    } else {
+        None
+    };
+
+    let Some(mut offer) = offer else {
+        write_frame(&mut send, &Message::FileNotFound).await?;
+        let _ = send.finish();
+        return Ok(());
+    };
+
+    write_frame(
+        &mut send,
+        &Message::FileFound {
+            size: offer.size,
+            hash: offer.hash,
         },
-        peer,
-    ))
-}
+    )
+    .await?;
 
-/// `Hello`와 파일 목록을 보내는 일과 상대의 것을 받는 일을 동시에 한다.
-/// 둘 다 쓰고 난 뒤에 읽으면 큰 목록에서 서로 상대가 읽기를 기다리다 멈출 수 있기 때문이다.
-async fn exchange(
-    send: &mut (impl AsyncWrite + Unpin),
-    recv: &mut (impl AsyncRead + Unpin),
-    index: &[Entry],
-) -> Result<PeerHandshake, EngineError> {
-    let write = async {
-        write_frame(
-            send,
-            &Message::Hello {
-                version: PROTOCOL_VERSION,
-            },
-        )
-        .await?;
-        write_frame(
-            send,
-            &Message::Index {
-                entries: index.to_vec(),
-            },
-        )
-        .await?;
-        Ok::<(), EngineError>(())
-    };
-
-    let read = async {
-        let Message::Hello { version } = read_frame(recv).await? else {
-            return Err(EngineError::UnexpectedMessage("Hello"));
-        };
-        let Message::Index { entries } = read_frame(recv).await? else {
-            return Err(EngineError::UnexpectedMessage("Index"));
-        };
-        Ok::<PeerHandshake, EngineError>(PeerHandshake {
-            version,
-            index: entries,
-        })
-    };
-
-    let ((), peer) = tokio::try_join!(write, read)?;
-    Ok(peer)
+    // 파일이 그새 커졌어도 헤더에 적은 크기까지만 보낸다.
+    let sent = tokio::io::copy(&mut (&mut offer.file).take(offer.size), &mut send).await?;
+    if sent != offer.size {
+        // 파일이 줄어들어 약속한 만큼 못 보냈다. 정상 종료로 보이지 않게 스트림을 끊는다.
+        let _ = send.reset(0u32.into());
+        warn!("약속한 {}바이트 중 {sent}바이트만 보냈습니다", offer.size);
+        return Ok(());
+    }
+    let _ = send.finish();
+    Ok(())
 }
 
 #[cfg(test)]

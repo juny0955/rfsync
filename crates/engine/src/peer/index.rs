@@ -45,7 +45,7 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
 /// DB에서 첫 번째 루트의 파일 목록을 만든다. 루트가 없으면 빈 목록이다.
 ///
 /// 임시: 루트가 하나뿐이라고 가정해 첫 루트만 보낸다. 공유 모델(share_id)을 넣을 때 다시 설계한다.
-pub(super) fn load_index(db_path: &Path) -> Result<Vec<Entry>, EngineError> {
+pub(crate) fn load_index(db_path: &Path) -> Result<Vec<Entry>, EngineError> {
     let conn = rfsync_storage::open(db_path)?;
     let roots = rfsync_storage::list_roots(&conn)?;
 
