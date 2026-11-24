@@ -2,6 +2,7 @@ use std::{
     error::Error,
     net::{Ipv4Addr, SocketAddr, UdpSocket},
     path::PathBuf,
+    sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
 
@@ -15,6 +16,21 @@ use super::*;
 use crate::peer::identity::SERVER_NAME;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 비어 있는 UDP 포트를 하나 고른다.
+///
+/// "포트 0에 바인딩해 알아낸 뒤 놓아 주는" 방식은 병렬로 도는 다른 테스트가 그 포트를 가져가는 일이 있어
+/// 가끔 `Address already in use`로 실패했다. 임시 포트 범위 밖의 번호를 프로세스 안에서 하나씩 올려가며
+/// 고르므로, 같은 프로세스의 테스트끼리는 같은 포트를 받지 않는다.
+fn free_port() -> u16 {
+    static NEXT: AtomicU16 = AtomicU16::new(20_000);
+    loop {
+        let port = NEXT.fetch_add(1, Ordering::Relaxed);
+        if UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok() {
+            return port;
+        }
+    }
+}
 
 fn new_identity() -> Result<Identity, Box<dyn Error>> {
     let (cert, key) = generate_certificate(SERVER_NAME)?;
@@ -33,10 +49,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Result<Self, Box<dyn Error>> {
         let dir = tempfile::tempdir()?;
-        // 비어 있는 UDP 포트를 찾아서 쓴다.
-        let port = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?
-            .local_addr()?
-            .port();
+        let port = free_port();
         Ok(Self {
             db_path: dir.path().join("session.db"),
             _dir: dir,
