@@ -19,7 +19,10 @@ use tracing::{debug, info, warn};
 
 use self::{backoff::Backoff, handshake::handshake};
 use super::identity::{Identity, SERVER_NAME};
-use crate::{error::EngineError, peer::PeerEvent};
+use crate::{
+    error::EngineError,
+    peer::{PeerEvent, PeerHandle},
+};
 
 mod backoff;
 mod handshake;
@@ -151,6 +154,7 @@ async fn hold_connection(
             if events
                 .send(PeerEvent::IndexReceived {
                     index: peer.index.clone(),
+                    peer: PeerHandle::new(conn.clone()),
                 })
                 .await
                 .is_err()

@@ -45,7 +45,9 @@ async fn run_coordinator(
 ) {
     while let Some(event) = events.recv().await {
         match event {
-            PeerEvent::IndexReceived { index: peer_index } => {
+            PeerEvent::IndexReceived {
+                index: peer_index, ..
+            } => {
                 on_index_received(&index, &peer_index);
             }
             PeerEvent::FileRequested { path, reply } => {
