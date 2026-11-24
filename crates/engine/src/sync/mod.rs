@@ -1,17 +1,38 @@
 //! `local`과 `peer`를 잇는 coordinator.
 
+use std::path::Path;
+
 use rfsync_protocol::Entry;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{self, Receiver};
 use tracing::{debug, info};
 
 use crate::{
-    peer::PeerEvent,
+    error::EngineError,
+    peer::{self, Identity, PeerEvent, load_index},
     sync::compare::{IndexComparison, compare_index},
 };
 
 mod compare;
 
-pub(crate) async fn run_coordinator(index: Vec<Entry>, mut events: Receiver<PeerEvent>) {
+/// 데몬 본체. 내 파일 목록을 읽고, 세션이 보내는 이벤트를 처리하는 coordinator를 띄운 뒤 세션을 실행한다.
+pub async fn run(
+    identity: &Identity,
+    port: u16,
+    db_path: &Path,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), EngineError> {
+    let index = load_index(db_path)?;
+    let (events, receiver) = mpsc::channel(32);
+    let coordinator = tokio::spawn(run_coordinator(index.clone(), receiver));
+
+    let result = peer::run(identity, port, db_path, index, events, shutdown).await;
+
+    // 종료 중에는 남은 이벤트를 기다리지 않는다. 세션이 끝난 뒤에도 연결 작업이 송신구를 쥐고 있을 수 있다.
+    coordinator.abort();
+    result
+}
+
+async fn run_coordinator(index: Vec<Entry>, mut events: Receiver<PeerEvent>) {
     while let Some(event) = events.recv().await {
         match event {
             PeerEvent::IndexReceived { index: peer_index } => {

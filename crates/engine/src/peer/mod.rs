@@ -9,5 +9,6 @@ mod session;
 
 pub use event::PeerEvent;
 pub use identity::{Identity, load_or_create_identity};
+pub(crate) use index::load_index;
 pub use pairing::{connect, listen};
-pub use session::run;
+pub(crate) use session::run;

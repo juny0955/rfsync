@@ -18,10 +18,7 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use self::backoff::Backoff;
-use super::{
-    identity::{Identity, SERVER_NAME},
-    index::load_index,
-};
+use super::identity::{Identity, SERVER_NAME};
 use crate::{error::EngineError, peer::PeerEvent};
 
 mod backoff;
@@ -37,6 +34,7 @@ pub async fn run(
     identity: &Identity,
     port: u16,
     db_path: &Path,
+    index: Vec<Entry>,
     events: Sender<PeerEvent>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), EngineError> {
@@ -49,8 +47,8 @@ pub async fn run(
         return Err(EngineError::NoPairedDevices);
     }
 
-    // 임시: 시작 시점의 목록을 모든 연결에 보낸다. 라이브 변경 반영은 coordinator 도입 때 처리한다.
-    let index = Arc::new(load_index(db_path)?);
+    // 임시: 시작 시점의 목록을 모든 연결에 보낸다. 라이브 변경 반영은 증분 전송 단계에서 처리한다.
+    let index = Arc::new(index);
 
     let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let certs: Vec<&[u8]> = devices.iter().map(|d| d.cert_der.as_slice()).collect();

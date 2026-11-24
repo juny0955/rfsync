@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use super::*;
-use crate::peer::identity::SERVER_NAME;
+use crate::peer::{identity::SERVER_NAME, load_index};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -68,8 +68,17 @@ impl Fixture {
     }
 
     async fn run(&self, shutdown: impl Future<Output = ()>) -> Result<(), EngineError> {
+        let index = load_index(&self.db_path)?;
         let (events, _rx) = mpsc::channel(8);
-        run(&self.daemon, self.port, &self.db_path, events, shutdown).await
+        run(
+            &self.daemon,
+            self.port,
+            &self.db_path,
+            index,
+            events,
+            shutdown,
+        )
+        .await
     }
 
     /// 주어진 신원으로 데몬에 접속한다. 엔드포인트도 연결이 살아 있는 동안 유지해야 한다.
