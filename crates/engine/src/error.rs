@@ -1,6 +1,7 @@
 use std::{io, num::TryFromIntError, path::PathBuf, time::SystemTimeError};
 
 use rfsync_fs::error::FsError;
+use rfsync_ipc::IpcError;
 use rfsync_network::NetworkError;
 use rfsync_protocol::ProtocolError;
 use rfsync_storage::error::StorageError;
@@ -67,4 +68,13 @@ pub enum EngineError {
 
     #[error("예상하지 못한 메시지입니다: {0}가 와야 합니다")]
     UnexpectedMessage(&'static str),
+
+    #[error("IPC 오류: {0}")]
+    Ipc(#[from] IpcError),
+
+    #[error("이미 다른 데몬이 실행 중입니다: {}", .0.display())]
+    DaemonAlreadyRunning(PathBuf),
+
+    #[error("소켓 경로에 소켓이 아닌 파일이 있습니다: {}", .0.display())]
+    NotASocket(PathBuf),
 }
