@@ -16,6 +16,7 @@ pub(super) struct IndexComparison {
 /// - 내게만 있는 파일은 무시한다. 삭제인지 새로 만든 것인지 구분할 정보(삭제 기록, 버전)가 없고,
 ///   상대가 같은 비교를 해서 자기에게 없는 파일을 요청하기 때문이다.
 /// - 내용이 같으면 수정시각이 달라도 같은 파일로 본다. 전송할 필요가 없다.
+/// - 상대의 삭제 기록(`deleted`)은 받아 올 파일이 아니므로 어느 쪽에도 담지 않는다. 삭제를 적용하는 일은 아직 없다.
 pub(super) fn compare_index(local: &[Entry], remote: &[Entry]) -> IndexComparison {
     let local_hashes: HashMap<&str, &[u8; 32]> = local
         .iter()
@@ -23,7 +24,7 @@ pub(super) fn compare_index(local: &[Entry], remote: &[Entry]) -> IndexCompariso
         .collect();
 
     let mut comparison = IndexComparison::default();
-    for entry in remote {
+    for entry in remote.iter().filter(|entry| !entry.deleted) {
         match local_hashes.get(entry.path.as_str()) {
             None => comparison.missing.push(entry.clone()),
             Some(hash) if **hash != entry.hash => comparison.changed.push(entry.clone()),
@@ -38,17 +39,20 @@ pub(super) fn compare_index(local: &[Entry], remote: &[Entry]) -> IndexCompariso
 
 /// 내 목록이 `before`에서 `after`로 바뀌었을 때, 상대에게 알릴 항목을 골라낸다. 결과는 `after`의 순서를 따른다.
 ///
-/// 새로 생겼거나 내용(해시)이 바뀐 파일만 담고, 담기는 것은 `after`의 항목이다.
-/// 삭제는 담지 않는다. 삭제를 표현할 방법(삭제 기록)이 아직 없다.
+/// 새로 생겼거나, 내용(해시)이 바뀌었거나, 삭제 여부가 바뀐 항목만 담고, 담기는 것은 `after`의 항목이다.
+/// 파일을 지우면 `after`에 삭제 기록(`deleted`)이 남으므로 삭제도 여기에 담긴다.
+/// 같은 내용으로 다시 만든 경우도 삭제 여부가 바뀐 것이라 담긴다.
 pub(super) fn changed_entries(before: &[Entry], after: &[Entry]) -> Vec<Entry> {
-    let before_hashes: HashMap<&str, &[u8; 32]> = before
+    let before_state: HashMap<&str, (&[u8; 32], bool)> = before
         .iter()
-        .map(|entry| (entry.path.as_str(), &entry.hash))
+        .map(|entry| (entry.path.as_str(), (&entry.hash, entry.deleted)))
         .collect();
 
     after
         .iter()
-        .filter(|entry| before_hashes.get(entry.path.as_str()) != Some(&&entry.hash))
+        .filter(|entry| {
+            before_state.get(entry.path.as_str()) != Some(&(&entry.hash, entry.deleted))
+        })
         .cloned()
         .collect()
 }
@@ -64,6 +68,14 @@ mod tests {
             hash: [hash; 32],
             modified_secs: 100,
             modified_nanos: 0,
+            deleted: false,
+        }
+    }
+
+    fn deleted(path: &str, hash: u8) -> Entry {
+        Entry {
+            deleted: true,
+            ..entry(path, hash)
         }
     }
 
@@ -204,10 +216,43 @@ mod tests {
     }
 
     #[test]
-    fn 삭제된_파일은_바뀐_항목에_넣지_않는다() {
+    fn 목록에서_사라진_항목은_바뀐_항목에_넣지_않는다() {
         let before = vec![entry("a.txt", 1), entry("gone.txt", 2)];
         let after = vec![entry("a.txt", 1)];
 
         assert!(changed_entries(&before, &after).is_empty());
+    }
+
+    #[test]
+    fn 파일을_지우면_삭제_기록이_바뀐_항목이다() {
+        let before = vec![entry("a.txt", 1), entry("gone.txt", 2)];
+        let after = vec![entry("a.txt", 1), deleted("gone.txt", 2)];
+
+        let changed = changed_entries(&before, &after);
+
+        assert_eq!(changed, vec![deleted("gone.txt", 2)]);
+    }
+
+    #[test]
+    fn 같은_내용으로_다시_만들어도_바뀐_항목이다() {
+        let before = vec![deleted("a.txt", 1)];
+        let after = vec![entry("a.txt", 1)];
+
+        assert_eq!(changed_entries(&before, &after), vec![entry("a.txt", 1)]);
+    }
+
+    #[test]
+    fn 이미_삭제_기록인_항목은_다시_알리지_않는다() {
+        let before = vec![deleted("gone.txt", 2)];
+
+        assert!(changed_entries(&before, &before).is_empty());
+    }
+
+    #[test]
+    fn 상대의_삭제_기록은_받아_올_파일이_아니다() {
+        let local = vec![entry("a.txt", 1)];
+        let remote = vec![deleted("a.txt", 9), deleted("never-had.txt", 2)];
+
+        assert_eq!(compare_index(&local, &remote), IndexComparison::default());
     }
 }

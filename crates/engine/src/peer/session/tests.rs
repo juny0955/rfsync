@@ -360,6 +360,7 @@ fn entry(path: &str) -> Entry {
         hash: [9; 32],
         modified_secs: 1,
         modified_nanos: 2,
+        deleted: false,
     }
 }
 

@@ -251,6 +251,7 @@ mod tests {
             hash: [hash; 32],
             modified_secs: 100,
             modified_nanos: 0,
+            deleted: false,
         }
     }
 

@@ -12,6 +12,9 @@ pub struct Entry {
     pub hash: [u8; 32],
     pub modified_secs: i64,
     pub modified_nanos: u32,
+    /// 삭제된 파일이다(삭제 기록). 이때 `size`·`hash`는 지우기 직전 내용의 값이다.
+    /// 필드는 순서대로 직렬화되므로 새 필드는 항상 맨 뒤에 추가한다.
+    pub deleted: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -70,6 +73,7 @@ mod tests {
                     hash: [7u8; 32], // 7이 32개인 가짜 해시
                     modified_secs: 1_700_000_000,
                     modified_nanos: 500,
+                    deleted: false,
                 },
                 Entry {
                     path: "docs/b.txt".to_string(),
@@ -77,11 +81,28 @@ mod tests {
                     hash: [7u8; 32], // 7이 32개인 가짜 해시
                     modified_secs: 1_700_000_000,
                     modified_nanos: 500,
+                    deleted: false,
                 },
             ],
         };
         let bytes = encode(&msg).unwrap();
         assert_eq!(decode(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn 삭제된_항목도_바이트로_바꿨다_되돌리면_같다() {
+        let msg = Message::IndexUpdate {
+            entries: vec![Entry {
+                path: "gone.txt".to_string(),
+                size: 5,
+                hash: [3u8; 32],
+                modified_secs: 1_700_000_000,
+                modified_nanos: 0,
+                deleted: true,
+            }],
+        };
+        let decoded = decode(&encode(&msg).unwrap()).unwrap();
+        assert_eq!(decoded, msg);
     }
 
     #[test]
@@ -113,6 +134,7 @@ mod tests {
                 hash: [3u8; 32],
                 modified_secs: 1_700_000_000,
                 modified_nanos: 1,
+                deleted: false,
             }],
         };
         let bytes = encode(&msg).unwrap();
