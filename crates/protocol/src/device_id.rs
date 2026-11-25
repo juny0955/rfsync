@@ -13,6 +13,10 @@ impl DeviceId {
         id.copy_from_slice(&hash.as_bytes()[..8]);
         Self(id)
     }
+
+    pub fn as_bytes(&self) -> &[u8; 8] {
+        &self.0
+    }
 }
 
 #[cfg(test)]
@@ -24,6 +28,16 @@ mod tests {
         assert_eq!(
             DeviceId::from_cert(b"cert-a"),
             DeviceId::from_cert(b"cert-a")
+        );
+    }
+
+    #[test]
+    fn 바이트는_인증서_해시의_앞_8바이트다() {
+        let hash = blake3::hash(b"cert-a");
+
+        assert_eq!(
+            DeviceId::from_cert(b"cert-a").as_bytes(),
+            &hash.as_bytes()[..8]
         );
     }
 

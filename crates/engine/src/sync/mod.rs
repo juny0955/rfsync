@@ -27,6 +27,7 @@ use crate::{
 };
 
 mod compare;
+mod conflict;
 
 /// 데몬 본체. 내 파일 목록을 읽고, 세션이 보내는 이벤트를 처리하는 coordinator를 띄운 뒤 세션을 실행한다.
 pub async fn run(
