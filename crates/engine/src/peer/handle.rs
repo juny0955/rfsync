@@ -1,5 +1,6 @@
 use rfsync_network::{QuicConnection, QuicRecvStream, open_stream};
-use rfsync_protocol::{Message, read_frame, write_frame};
+use rfsync_protocol::{Entry, Message, read_frame, write_frame};
+use tokio::sync::mpsc::Sender;
 
 use crate::error::EngineError;
 
@@ -20,11 +21,21 @@ pub struct FileDownload {
 #[derive(Debug, Clone)]
 pub struct PeerHandle {
     conn: QuicConnection,
+    /// 세션의 제어 스트림 쓰기 작업으로 가는 통로. 보낼 항목을 여기에 넣으면 세션이 `IndexUpdate`로 보낸다.
+    updates: Sender<Vec<Entry>>,
 }
 
 impl PeerHandle {
-    pub(super) fn new(conn: QuicConnection) -> Self {
-        Self { conn }
+    pub(super) fn new(conn: QuicConnection, updates: Sender<Vec<Entry>>) -> Self {
+        Self { conn, updates }
+    }
+
+    /// 연결된 뒤에 바뀐 항목을 상대에게 알린다. 연결이 이미 끝났다면 에러다.
+    pub async fn send_update(&self, entries: Vec<Entry>) -> Result<(), EngineError> {
+        self.updates
+            .send(entries)
+            .await
+            .map_err(|_| EngineError::PeerDisconnected)
     }
 
     /// 상대에게 파일 하나를 요청한다. `path`는 루트 기준 상대 경로(`Entry.path`)다.

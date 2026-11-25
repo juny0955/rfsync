@@ -58,6 +58,10 @@ async fn run_coordinator(
                     None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
                 }
             }
+            PeerEvent::IndexUpdated { entries } => {
+                // 임시: 아직 처리하지 않고 받았다는 것만 남긴다. 비교와 받아 오기는 다음 단계에서 붙인다.
+                debug!("상대의 변경 {}개를 받았습니다", entries.len());
+            }
             PeerEvent::FileRequested { path, reply } => {
                 // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
                 let root = root.clone();

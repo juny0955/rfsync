@@ -832,7 +832,8 @@ struct HandshakenPeer {
     conn: QuicConnection,
     /// 데몬이 `IndexReceived`로 넘겨 준, 이 연결에 파일을 요청하는 손잡이.
     handle: PeerHandle,
-    _control: (QuicSendStream, QuicRecvStream),
+    /// 핸드셰이크에 쓴 제어 스트림. 이후의 `IndexUpdate`도 이 스트림으로 오간다.
+    control: (QuicSendStream, QuicRecvStream),
 }
 
 /// 상대 피어로 데몬에 접속해 핸드셰이크를 마치고, 데몬이 보낸 `IndexReceived`에서 손잡이를 꺼낸다.
@@ -855,7 +856,7 @@ async fn handshake_with_daemon(
         _endpoint: endpoint,
         conn,
         handle,
-        _control: (send, recv),
+        control: (send, recv),
     })
 }
 
@@ -1031,6 +1032,57 @@ async fn gives_each_request_its_own_stream_so_downloads_can_overlap() -> Result<
             served?;
             first?;
             second
+        })
+        .await
+}
+
+#[tokio::test]
+async fn forwards_an_index_update_from_the_peer_as_an_event() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let (events, mut received) = mpsc::channel(8);
+
+    fixture
+        .with_daemon_events(events, || async {
+            let mut peer = handshake_with_daemon(&fixture, &mut received).await?;
+
+            let update = Message::IndexUpdate {
+                entries: vec![entry("new.txt")],
+            };
+            write_frame(&mut peer.control.0, &update).await?;
+
+            let event = timeout(TIMEOUT, received.recv())
+                .await?
+                .ok_or("이벤트 통로가 닫혔다")?;
+            let PeerEvent::IndexUpdated { entries } = event else {
+                return Err("IndexUpdated가 아니다".into());
+            };
+            assert_eq!(entries, vec![entry("new.txt")]);
+            Ok(())
+        })
+        .await
+}
+
+#[tokio::test]
+async fn sends_an_index_update_to_the_peer_through_the_handle() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fixture.pair_peer()?;
+    let (events, mut received) = mpsc::channel(8);
+
+    fixture
+        .with_daemon_events(events, || async {
+            let mut peer = handshake_with_daemon(&fixture, &mut received).await?;
+
+            peer.handle.send_update(vec![entry("changed.txt")]).await?;
+
+            let message = timeout(TIMEOUT, read_frame(&mut peer.control.1)).await??;
+            assert_eq!(
+                message,
+                Message::IndexUpdate {
+                    entries: vec![entry("changed.txt")]
+                }
+            );
+            Ok(())
         })
         .await
 }

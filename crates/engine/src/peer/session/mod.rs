@@ -11,7 +11,10 @@ use rfsync_network::{
 use rfsync_protocol::{Entry, Message, PROTOCOL_VERSION, read_frame, write_frame};
 use tokio::{
     io::AsyncReadExt,
-    sync::{mpsc::Sender, oneshot},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        oneshot,
+    },
     task::JoinSet,
     time::sleep,
 };
@@ -139,9 +142,11 @@ async fn hold_connection(
 ) {
     debug!("연결 시작: {role:?}, 보낼 파일 목록 {}개", index.len());
 
-    // 핸드셰이크가 끝나도 스트림을 닫지 않고, 연결이 끝날 때까지 쥐고 있는다.
-    let mut serving = None;
-    let _stream = match handshake(&conn, role, &index).await {
+    // 핸드셰이크 뒤에도 제어 스트림을 닫지 않고 연결이 끝날 때까지 쓴다. 작업은 JoinSet이 버려질 때 함께 끝난다.
+    let mut tasks = JoinSet::new();
+    // 이 송신구를 연결이 끝날 때까지 쥐고 있어, 손잡이를 모두 버려도 쓰기 작업이 끝나 스트림이 닫히지 않는다.
+    let (updates, updates_rx) = mpsc::channel(32);
+    match handshake(&conn, role, &index).await {
         Ok((stream, peer)) => {
             if peer.version != PROTOCOL_VERSION {
                 warn!(
@@ -154,7 +159,7 @@ async fn hold_connection(
             if events
                 .send(PeerEvent::IndexReceived {
                     index: peer.index.clone(),
-                    peer: PeerHandle::new(conn.clone()),
+                    peer: PeerHandle::new(conn.clone(), updates.clone()),
                 })
                 .await
                 .is_err()
@@ -163,19 +168,54 @@ async fn hold_connection(
             }
 
             // 핸드셰이크가 끝난 연결에서만 상대의 파일 요청을 받는다.
-            serving = Some(tokio::spawn(serve_requests(conn.clone(), events.clone())));
-            Some(stream)
+            tasks.spawn(serve_requests(conn.clone(), events.clone()));
+            // 읽기와 쓰기를 따로 돌린다. 프레임 읽기는 select!로 중간에 끊으면 안 되기 때문이다.
+            tasks.spawn(read_updates(stream.recv, events.clone()));
+            tasks.spawn(write_updates(stream.send, updates_rx));
         }
-        Err(e) => {
-            warn!("핸드셰이크 실패: {e}");
-            None
-        }
-    };
+        Err(e) => warn!("핸드셰이크 실패: {e}"),
+    }
 
     let reason = conn.closed().await;
     info!("연결 종료: {reason}");
-    if let Some(serving) = serving {
-        serving.abort();
+    tasks.shutdown().await;
+    drop(updates);
+}
+
+/// 상대가 제어 스트림으로 보내는 `IndexUpdate`를 연결이 끝날 때까지 coordinator에게 전달한다.
+async fn read_updates(mut recv: QuicRecvStream, events: Sender<PeerEvent>) {
+    loop {
+        match read_frame(&mut recv).await {
+            Ok(Message::IndexUpdate { entries }) => {
+                if events
+                    .send(PeerEvent::IndexUpdated { entries })
+                    .await
+                    .is_err()
+                {
+                    warn!("coordinator가 닫혀 있어 상대의 변경을 전달하지 못하였습니다");
+                    return;
+                }
+            }
+            Ok(_) => {
+                warn!("제어 스트림에 예상하지 못한 메시지가 왔습니다");
+                return;
+            }
+            // 연결이 끝나면 읽기가 실패한다. 정상적인 종료다.
+            Err(e) => {
+                debug!("제어 스트림 읽기 종료: {e}");
+                return;
+            }
+        }
+    }
+}
+
+/// 손잡이로 들어온 변경 항목을 제어 스트림으로 상대에게 보낸다.
+async fn write_updates(mut send: QuicSendStream, mut updates: Receiver<Vec<Entry>>) {
+    while let Some(entries) = updates.recv().await {
+        if let Err(e) = write_frame(&mut send, &Message::IndexUpdate { entries }).await {
+            warn!("변경 목록을 보내지 못했습니다: {e}");
+            return;
+        }
     }
 }
 

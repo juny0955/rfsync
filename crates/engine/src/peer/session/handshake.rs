@@ -9,8 +9,8 @@ use crate::error::EngineError;
 
 /// 연결에서 쓰는 대화 창구. 핸드셰이크 뒤에도 같은 스트림으로 계속 주고받는다.
 pub(super) struct ControlStream {
-    _send: QuicSendStream,
-    _recv: QuicRecvStream,
+    pub(super) send: QuicSendStream,
+    pub(super) recv: QuicRecvStream,
 }
 
 /// 상대가 보낸 핸드셰이크 내용.
@@ -31,13 +31,7 @@ pub(super) async fn handshake(
     };
 
     let peer = exchange(&mut send, &mut recv, index).await?;
-    Ok((
-        ControlStream {
-            _send: send,
-            _recv: recv,
-        },
-        peer,
-    ))
+    Ok((ControlStream { send, recv }, peer))
 }
 
 /// `Hello`와 파일 목록을 보내는 일과 상대의 것을 받는 일을 동시에 한다.
