@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_engine::{register_root, watch_root};
+use rfsync_engine::{DeviceId, register_root, watch_root};
 
 struct TestDir(PathBuf);
 
@@ -74,7 +74,7 @@ fn watcher_child() -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
     let root_id = std::env::var("RFSYNC_TEST_WATCH_ROOT_ID")?.parse()?;
-    watch_root(root_id, Path::new(&db))?;
+    watch_root(root_id, Path::new(&db), DeviceId::from_cert(b"test"))?;
     Ok(())
 }
 

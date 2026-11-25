@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::sync_path_for_test;
-use crate::{error::EngineError, register_root, watch_path, watch_root};
+use crate::{error::EngineError, register_root, watch_root};
 
 struct TestDir(PathBuf);
 
@@ -202,14 +202,9 @@ fn sync_rejects_missing_root_and_invalid_paths() -> Result<(), Box<dyn Error>> {
     fs::create_dir(&root)?;
     let root_id = register_root(&root, &db)?;
     assert!(matches!(
-        watch_root(-1, &db),
+        watch_root(-1, &db, super::test_device()),
         Err(EngineError::RootNotFound(-1))
     ));
-    let unregistered = dir.0.join("unregistered");
-    fs::create_dir(&unregistered)?;
-    assert!(
-        matches!(watch_path(&unregistered, &db), Err(EngineError::RootNotFoundByPath(path)) if path == unregistered)
-    );
     for path in [
         Path::new(""),
         Path::new("../outside"),

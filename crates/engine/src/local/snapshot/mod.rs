@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rfsync_protocol::DeviceId;
 use rfsync_storage::{DbConnection, Root, error::StorageError};
 
 use self::{
@@ -64,7 +65,7 @@ pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<
 /// 3. 폴더 추가
 /// 4. 파일 추가
 /// 5. 파일 수정
-pub fn sync_root(conn: &mut DbConnection, root: &Root) -> Result<(), EngineError> {
+pub fn sync_root(conn: &mut DbConnection, root: &Root, _me: DeviceId) -> Result<(), EngineError> {
     let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
     // === START TRANSACTION ===
@@ -80,7 +81,12 @@ pub fn sync_root(conn: &mut DbConnection, root: &Root) -> Result<(), EngineError
     Ok(())
 }
 
-pub fn sync_path(conn: &mut DbConnection, root: &Root, target: &Path) -> Result<(), EngineError> {
+pub fn sync_path(
+    conn: &mut DbConnection,
+    root: &Root,
+    target: &Path,
+    _me: DeviceId,
+) -> Result<(), EngineError> {
     let root_path = Path::new(&root.local_path);
     let entry = rfsync_fs::scan_path(root_path, target)?;
 

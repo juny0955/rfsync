@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{create_initial_snapshot_for_test, sync_path_for_test, sync_root_for_test};
-use crate::{error::EngineError, watch_path, watch_root};
+use crate::{error::EngineError, watch_root};
 
 type Snapshot = (Vec<String>, Vec<(String, i64)>);
 
@@ -263,10 +263,7 @@ fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error
 fn synchronization_rejects_uninitialized_root() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     assert!(
-        matches!(watch_root(f.root_id, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
-    );
-    assert!(
-        matches!(watch_path(&f.root, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
+        matches!(watch_root(f.root_id, &f.db, super::test_device()), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
     );
     Ok(())
 }

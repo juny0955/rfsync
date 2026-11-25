@@ -15,4 +15,4 @@ pub(crate) use root::first_root_path;
 pub use root::register_root;
 pub(crate) use serve::open_for_serving;
 pub(crate) use watcher::spawn_watcher;
-pub use watcher::{watch_path, watch_root};
+pub use watcher::watch_root;

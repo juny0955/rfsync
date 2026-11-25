@@ -17,11 +17,6 @@ enum Command {
         /// 동기화할 폴더 경로
         path: PathBuf,
     },
-    /// 등록된 폴더를 감시하고 동기화합니다.
-    Watch {
-        /// 감시할 폴더 경로
-        path: PathBuf,
-    },
     /// 페어링을 시작합니다.
     PairListen {
         /// 로컬 TCP·UDP 포트
@@ -56,12 +51,6 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
             println!("root 등록 및 초기 스냅샷 생성 완료");
-        }
-        Command::Watch { path } => {
-            if let Err(e) = rfsync_engine::watch_path(&path, db_path) {
-                eprintln!("동기화 실패: {e}");
-                return ExitCode::FAILURE;
-            }
         }
         Command::PairListen { port } => {
             if let Err(error) =

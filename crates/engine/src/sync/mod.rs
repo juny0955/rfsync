@@ -34,7 +34,7 @@ pub async fn run(
     let (events, receiver) = mpsc::channel(32);
     // 용량 1: 신호가 쌓여 있으면 받는 쪽이 곧 최신 상태를 읽으므로 더 쌓을 필요가 없다.
     let (local_changed, local_receiver) = mpsc::channel(1);
-    spawn_watcher(db_path, local_changed)?;
+    spawn_watcher(db_path, local_changed, identity.device_id())?;
     let coordinator = tokio::spawn(run_coordinator(
         index.clone(),
         root,
