@@ -18,7 +18,7 @@ pub(super) fn test_device() -> DeviceId {
 
 fn create_initial_snapshot_for_test(root_id: i64, db_path: &Path) -> Result<(), EngineError> {
     let mut conn = rfsync_storage::open(db_path)?;
-    create_initial_snapshot(&mut conn, root_id)
+    create_initial_snapshot(&mut conn, root_id, crate::DeviceId::from_cert(b"test"))
 }
 
 fn sync_root_for_test(root_id: i64, db_path: &Path) -> Result<(), EngineError> {

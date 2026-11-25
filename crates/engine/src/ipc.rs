@@ -147,7 +147,8 @@ async fn add_root(path: PathBuf, context: &IpcContext) -> Response {
         return Response::Error("경로는 절대 경로여야 합니다".into());
     }
     let db_path = context.db_path.clone();
-    match tokio::task::spawn_blocking(move || crate::register_root(&path, &db_path)).await {
+    let me = crate::DeviceId::from_cert(&context.cert);
+    match tokio::task::spawn_blocking(move || crate::register_root(&path, &db_path, me)).await {
         Ok(Ok(_)) => {
             // 가득 차 있어도 받는 쪽이 곧 읽을 것이므로 무시한다.
             let _ = context.root_added.try_send(());

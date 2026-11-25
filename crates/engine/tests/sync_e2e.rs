@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use rfsync_engine::{Identity, register_root, run};
+use rfsync_engine::{DeviceId, Identity, register_root, run};
 use tempfile::TempDir;
 use tokio::{
     sync::oneshot,
@@ -57,9 +57,8 @@ impl Node {
         fs::create_dir_all(&root)?;
 
         let db_path = dir.path().join("node.db");
-        register_root(&root, &db_path)?;
-
         let (cert, key) = rfsync_network::generate_certificate(SERVER_NAME)?;
+        register_root(&root, &db_path, DeviceId::from_cert(&cert))?;
         Ok(Self {
             _dir: dir,
             root,

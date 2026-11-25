@@ -3,11 +3,6 @@ use rfsync_storage::{File, SyncPending};
 
 use crate::error::EngineError;
 
-/// 아직 아무도 고치지 않은 파일의 version 바이트. 직렬화한 빈 벡터다(빈 바이트는 읽을 수 없다).
-pub(super) fn empty_version() -> Result<Vec<u8>, EngineError> {
-    Ok(VersionVector::default().to_bytes()?)
-}
-
 /// 내가 파일을 지운 것을 DB에 반영할 때 저장할 version 바이트를 정한다.
 /// 삭제도 한 번의 변경이므로 이전 version에서 내 카운터를 올린다. 해시는 지우기 직전 내용의 것이다.
 pub(super) fn deleted_file_version(file: &File, me: DeviceId) -> Result<Vec<u8>, EngineError> {
@@ -277,16 +272,6 @@ mod tests {
         file.version = Vec::new();
 
         assert!(next_file_version(Some(&file), &"b".repeat(64), device("me")).is_err());
-    }
-
-    #[test]
-    fn 빈_version_바이트는_읽을_수_있는_빈_벡터다() {
-        let bytes = empty_version().unwrap();
-
-        assert_eq!(
-            VersionVector::from_bytes(&bytes).unwrap(),
-            VersionVector::default()
-        );
     }
 
     #[test]

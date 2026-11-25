@@ -21,7 +21,11 @@ fn registers_canonical_root_path_with_initial_snapshot_and_returns_id() -> Resul
 
     let result = (|| -> Result<_, Box<dyn Error>> {
         let expected_path = root.canonicalize()?;
-        let root_id = rfsync_engine::register_root(&root.join("."), &db_path)?;
+        let root_id = rfsync_engine::register_root(
+            &root.join("."),
+            &db_path,
+            rfsync_engine::DeviceId::from_cert(b"test"),
+        )?;
         let conn = rfsync_storage::open(&db_path)?;
         let (saved_path, has_snapshot): (String, i64) = conn.query_row(
             "SELECT local_path, has_snapshot FROM roots WHERE id = ?1",
@@ -49,9 +53,13 @@ fn rejects_already_registered_canonical_path() -> Result<(), Box<dyn Error>> {
     let root = test_dir.join("root");
     let db_path = test_dir.join("test.db");
     fs::create_dir(&root)?;
-    rfsync_engine::register_root(&root, &db_path)?;
+    rfsync_engine::register_root(&root, &db_path, rfsync_engine::DeviceId::from_cert(b"test"))?;
 
-    let result = rfsync_engine::register_root(&root.join("."), &db_path);
+    let result = rfsync_engine::register_root(
+        &root.join("."),
+        &db_path,
+        rfsync_engine::DeviceId::from_cert(b"test"),
+    );
 
     assert!(matches!(
         result,
@@ -77,7 +85,11 @@ fn rejects_root_with_non_utf8_path() -> Result<(), Box<dyn Error>> {
     fs::create_dir(&root)?;
     let expected = root.canonicalize()?;
 
-    let result = rfsync_engine::register_root(&root, &test_dir.join("test.db"));
+    let result = rfsync_engine::register_root(
+        &root,
+        &test_dir.join("test.db"),
+        rfsync_engine::DeviceId::from_cert(b"test"),
+    );
 
     assert!(matches!(result, Err(EngineError::InvalidRootPath(path)) if path == expected));
     fs::remove_dir_all(test_dir)?;

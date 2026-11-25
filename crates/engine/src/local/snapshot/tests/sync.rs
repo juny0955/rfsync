@@ -380,11 +380,11 @@ fn sync_root_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Erro
 
     fs::write(f.root.join("memo"), b"two")?;
     sync_root_for_test(f.root_id, &f.db)?;
-    assert_eq!(stored_version(&f, "", "memo")?, my_version(1));
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
 
     fs::write(f.root.join("memo"), b"three")?;
     sync_root_for_test(f.root_id, &f.db)?;
-    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(3));
     Ok(())
 }
 
@@ -396,11 +396,11 @@ fn sync_path_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Erro
 
     fs::write(f.root.join("memo"), b"two")?;
     sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
-    assert_eq!(stored_version(&f, "", "memo")?, my_version(1));
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
 
     fs::write(f.root.join("memo"), b"three")?;
     sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
-    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(3));
     Ok(())
 }
 
@@ -467,7 +467,7 @@ fn deleting_a_file_raises_my_counter_in_sync_path_and_sync_root() -> Result<(), 
     fs::write(f.root.join("by_path"), b"a")?;
     fs::write(f.root.join("by_root"), b"b")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
-    // 먼저 한 번 고쳐서 내 카운터를 1로 만든다.
+    // 초기 스냅샷이 1이고, 한 번 고쳐서 2로 만든다.
     fs::write(f.root.join("by_path"), b"aa")?;
     fs::write(f.root.join("by_root"), b"bb")?;
     sync_root_for_test(f.root_id, &f.db)?;
@@ -477,8 +477,8 @@ fn deleting_a_file_raises_my_counter_in_sync_path_and_sync_root() -> Result<(), 
     fs::remove_file(f.root.join("by_root"))?;
     sync_root_for_test(f.root_id, &f.db)?;
 
-    assert_eq!(stored_version(&f, "", "by_path")?, my_version(2));
-    assert_eq!(stored_version(&f, "", "by_root")?, my_version(2));
+    assert_eq!(stored_version(&f, "", "by_path")?, my_version(3));
+    assert_eq!(stored_version(&f, "", "by_root")?, my_version(3));
     Ok(())
 }
 
@@ -496,8 +496,8 @@ fn deleting_a_folder_raises_the_counter_of_every_file_inside() -> Result<(), Box
     fs::remove_dir_all(f.root.join("docs"))?;
     sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
 
-    assert_eq!(stored_version(&f, "docs", "a")?, my_version(2));
-    assert_eq!(stored_version(&f, "docs/nested", "b")?, my_version(2));
+    assert_eq!(stored_version(&f, "docs", "a")?, my_version(3));
+    assert_eq!(stored_version(&f, "docs/nested", "b")?, my_version(3));
     Ok(())
 }
 
@@ -510,7 +510,7 @@ fn an_already_deleted_file_keeps_its_version_on_later_events() -> Result<(), Box
     fs::remove_file(f.root.join("docs/a"))?;
     sync_path_for_test(f.root_id, &f.db, Path::new("docs/a"))?;
     let deleted = stored_version(&f, "docs", "a")?;
-    assert_eq!(deleted, my_version(1));
+    assert_eq!(deleted, my_version(2));
 
     // 같은 경로와 부모 폴더의 이벤트가 다시 와도 삭제 기록은 앞서 나가지 않는다.
     sync_path_for_test(f.root_id, &f.db, Path::new("docs/a"))?;
@@ -531,6 +531,6 @@ fn replacing_a_file_with_a_folder_raises_the_old_files_counter() -> Result<(), B
     fs::create_dir(f.root.join("item"))?;
     sync_path_for_test(f.root_id, &f.db, Path::new("item"))?;
 
-    assert_eq!(stored_version(&f, "", "item")?, my_version(1));
+    assert_eq!(stored_version(&f, "", "item")?, my_version(2));
     Ok(())
 }

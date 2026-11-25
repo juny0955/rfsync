@@ -12,15 +12,18 @@ use self::{
 };
 use crate::error::EngineError;
 
-use self::entry::{portable_path, to_storage_file};
-use self::version::empty_version;
+use self::entry::{portable_path, to_local_storage_file};
 
 mod diff;
 mod entry;
 mod sync;
 mod version;
 
-pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<(), EngineError> {
+pub fn create_initial_snapshot(
+    conn: &mut DbConnection,
+    root_id: i64,
+    me: DeviceId,
+) -> Result<(), EngineError> {
     let root =
         rfsync_storage::get_root(conn, root_id)?.ok_or(EngineError::RootNotFound(root_id))?;
 
@@ -46,7 +49,7 @@ pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<
     }
 
     for entry in entries.iter().filter(|entry| !entry.is_dir()) {
-        let file = to_storage_file(entry, 0, &folder_ids, empty_version()?)?;
+        let file = to_local_storage_file(entry, 0, &folder_ids, None, me)?;
         rfsync_storage::insert_file(&tx, &file)?;
     }
 

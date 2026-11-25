@@ -467,7 +467,11 @@ fn register_root_with_files(
     std::fs::write(root_dir.path().join("a.txt"), "hello")?;
     std::fs::create_dir(root_dir.path().join("sub"))?;
     std::fs::write(root_dir.path().join("sub/b.txt"), "world")?;
-    crate::register_root(root_dir.path(), &fixture.db_path)?;
+    crate::register_root(
+        root_dir.path(),
+        &fixture.db_path,
+        crate::DeviceId::from_cert(b"test"),
+    )?;
     let expected = index_message(load_index(&fixture.db_path)?);
     Ok((root_dir, expected))
 }
@@ -701,7 +705,11 @@ async fn starts_and_serves_when_a_root_is_registered() -> Result<(), Box<dyn Err
     fixture.pair_peer()?;
     let root_dir = tempfile::tempdir()?;
     std::fs::write(root_dir.path().join("a.txt"), "hello")?;
-    crate::register_root(root_dir.path(), &fixture.db_path)?;
+    crate::register_root(
+        root_dir.path(),
+        &fixture.db_path,
+        crate::DeviceId::from_cert(b"test"),
+    )?;
 
     fixture
         .with_daemon(|| async {

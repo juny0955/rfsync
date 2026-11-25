@@ -98,7 +98,9 @@ mod tests {
         }
 
         let db = db_dir.path().join("test.db");
-        let root_id = crate::register_root(root_dir.path(), &db).unwrap();
+        let root_id =
+            crate::register_root(root_dir.path(), &db, crate::DeviceId::from_cert(b"test"))
+                .unwrap();
         let conn = rfsync_storage::open(&db).unwrap();
 
         (root_dir, db_dir, conn, root_id)
@@ -158,8 +160,10 @@ mod tests {
 
         assert_eq!(entries[0].path, "a.txt");
         assert_eq!(entries[0].version, stored);
-        // 버전을 바꾸지 않은 파일은 처음 등록 때의 빈 벡터 그대로다.
-        assert_eq!(entries[1].version, VersionVector::default());
+        // 버전을 바꾸지 않은 파일은 처음 등록 때의 `{나: 1}` 그대로다.
+        let mut registered = VersionVector::default();
+        registered.bump(crate::DeviceId::from_cert(b"test"));
+        assert_eq!(entries[1].version, registered);
     }
 
     #[test]
@@ -218,7 +222,9 @@ mod tests {
         let db_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(root_dir.path().join("empty")).unwrap();
         let db = db_dir.path().join("test.db");
-        let root_id = crate::register_root(root_dir.path(), &db).unwrap();
+        let root_id =
+            crate::register_root(root_dir.path(), &db, crate::DeviceId::from_cert(b"test"))
+                .unwrap();
         let conn = rfsync_storage::open(&db).unwrap();
 
         assert!(build_index(&conn, root_id).unwrap().is_empty());
@@ -241,7 +247,9 @@ mod tests {
         std::fs::create_dir(root_dir.path().join("sub")).unwrap();
         std::fs::write(root_dir.path().join("sub/b.txt"), "world").unwrap();
         let db = db_dir.path().join("test.db");
-        let root_id = crate::register_root(root_dir.path(), &db).unwrap();
+        let root_id =
+            crate::register_root(root_dir.path(), &db, crate::DeviceId::from_cert(b"test"))
+                .unwrap();
 
         let loaded = load_index(&db).unwrap();
 
@@ -259,8 +267,8 @@ mod tests {
         std::fs::write(first.path().join("first.txt"), "1").unwrap();
         std::fs::write(second.path().join("second.txt"), "2").unwrap();
         let db = db_dir.path().join("test.db");
-        crate::register_root(first.path(), &db).unwrap();
-        crate::register_root(second.path(), &db).unwrap();
+        crate::register_root(first.path(), &db, crate::DeviceId::from_cert(b"test")).unwrap();
+        crate::register_root(second.path(), &db, crate::DeviceId::from_cert(b"test")).unwrap();
 
         let paths: Vec<String> = load_index(&db)
             .unwrap()
