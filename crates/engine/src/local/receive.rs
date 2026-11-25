@@ -23,8 +23,9 @@ const BUFFER_SIZE: usize = 64 * 1024;
 /// 3. 해시가 `expected_hash`와 맞을 때만 임시 파일의 이름을 바꿔 진짜 경로에 둔다.
 ///
 /// 어느 단계에서든 실패하면 임시 파일은 지워지고 진짜 경로에는 아무것도 생기지 않는다.
-/// 이미 같은 경로에 파일이 있으면 덮어쓰지 않고 실패한다. 충돌 처리는 아직 없어서
-/// 지금은 내게 없는 파일(`missing`)만 받는 것을 전제로 한다.
+/// `overwrite`가 거짓이면 이미 같은 경로에 파일이 있을 때 덮어쓰지 않고 실패한다(내게 없는 파일을 받을 때).
+/// 참이면 이미 있는 파일을 새 내용으로 바꾼다(상대가 더 최신인 파일을 받을 때). 이름 바꾸기 한 번으로
+/// 바뀌므로 덮어쓰는 순간에도 반쯤 쓴 파일이 보이지 않는다.
 ///
 /// 임시 파일은 이름을 바꾸는 일이 한 번에 끝나도록(같은 파일 시스템) 목적지와 같은 폴더에 만든다.
 /// 그래서 받는 동안 루트 안에 `.rfsync-tmp-*` 파일이 보인다.
@@ -33,6 +34,7 @@ pub(crate) async fn save_received_file(
     requested: &str,
     size: u64,
     expected_hash: [u8; 32],
+    overwrite: bool,
     reader: &mut (impl AsyncRead + Unpin),
 ) -> Result<(), EngineError> {
     let target = resolve_in_root(root, requested)?;
@@ -44,7 +46,7 @@ pub(crate) async fn save_received_file(
     let destination = parent.join(file_name);
 
     // 다 받고 나서야 실패하지 않도록 먼저 확인한다. 마지막 이름 바꾸기에서도 한 번 더 막는다.
-    if destination.symlink_metadata().is_ok() {
+    if !overwrite && destination.symlink_metadata().is_ok() {
         return Err(already_exists(requested));
     }
 
@@ -78,12 +80,15 @@ pub(crate) async fn save_received_file(
     file.sync_all().await?;
     drop(file);
 
-    temp_path
-        .persist_noclobber(&destination)
-        .map_err(|e| match e.error.kind() {
-            ErrorKind::AlreadyExists => already_exists(requested),
-            _ => EngineError::Io(e.error),
-        })
+    let persisted = if overwrite {
+        temp_path.persist(&destination)
+    } else {
+        temp_path.persist_noclobber(&destination)
+    };
+    persisted.map_err(|e| match e.error.kind() {
+        ErrorKind::AlreadyExists => already_exists(requested),
+        _ => EngineError::Io(e.error),
+    })
 }
 
 /// 저장할 폴더가 루트 안에 있도록 확인하고, 없으면 만든다. 실제 경로(심볼릭 링크를 푼 것)를 돌려준다.
@@ -162,6 +167,7 @@ mod tests {
             requested,
             content.len() as u64,
             hash_of(content),
+            false,
             &mut reader,
         )
         .await
@@ -207,8 +213,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut reader: &[u8] = b"hello";
 
-        let result =
-            save_received_file(root.path(), "a.txt", 5, hash_of(b"other"), &mut reader).await;
+        let result = save_received_file(
+            root.path(),
+            "a.txt",
+            5,
+            hash_of(b"other"),
+            false,
+            &mut reader,
+        )
+        .await;
 
         assert!(matches!(result, Err(EngineError::HashMismatch(_))));
         assert!(!root.path().join("a.txt").exists());
@@ -220,8 +233,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut reader: &[u8] = b"hello";
 
-        let result =
-            save_received_file(root.path(), "a.txt", 10, hash_of(b"hello"), &mut reader).await;
+        let result = save_received_file(
+            root.path(),
+            "a.txt",
+            10,
+            hash_of(b"hello"),
+            false,
+            &mut reader,
+        )
+        .await;
 
         assert!(
             matches!(result, Err(EngineError::Io(ref e)) if e.kind() == ErrorKind::UnexpectedEof)
@@ -235,9 +255,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut reader: &[u8] = b"helloEXTRA";
 
-        save_received_file(root.path(), "a.txt", 5, hash_of(b"hello"), &mut reader)
-            .await
-            .unwrap();
+        save_received_file(
+            root.path(),
+            "a.txt",
+            5,
+            hash_of(b"hello"),
+            false,
+            &mut reader,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(fs::read(root.path().join("a.txt")).unwrap(), b"hello");
         assert_eq!(reader, b"EXTRA", "남은 바이트는 읽지 않고 그대로 둔다");
@@ -253,6 +280,54 @@ mod tests {
         assert!(
             matches!(result, Err(EngineError::Io(ref e)) if e.kind() == ErrorKind::AlreadyExists)
         );
+        assert_eq!(
+            fs::read_to_string(root.path().join("a.txt")).unwrap(),
+            "mine"
+        );
+        assert_eq!(leftover_temp_files(root.path()), 0);
+    }
+
+    #[tokio::test]
+    async fn overwrite가_참이면_이미_있는_파일을_새_내용으로_바꾼다() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.txt"), "mine").unwrap();
+        let mut reader: &[u8] = b"theirs";
+
+        save_received_file(
+            root.path(),
+            "a.txt",
+            6,
+            hash_of(b"theirs"),
+            true,
+            &mut reader,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.path().join("a.txt")).unwrap(),
+            "theirs"
+        );
+        assert_eq!(leftover_temp_files(root.path()), 0);
+    }
+
+    #[tokio::test]
+    async fn overwrite여도_해시가_틀리면_원래_파일을_그대로_둔다() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.txt"), "mine").unwrap();
+        let mut reader: &[u8] = b"theirs";
+
+        let result = save_received_file(
+            root.path(),
+            "a.txt",
+            6,
+            hash_of(b"other"),
+            true,
+            &mut reader,
+        )
+        .await;
+
+        assert!(matches!(result, Err(EngineError::HashMismatch(_))));
         assert_eq!(
             fs::read_to_string(root.path().join("a.txt")).unwrap(),
             "mine"

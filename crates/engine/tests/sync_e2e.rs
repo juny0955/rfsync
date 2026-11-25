@@ -374,6 +374,42 @@ async fn a_file_deleted_while_connected_is_deleted_on_the_other_node() -> Result
     Ok(())
 }
 
+#[tokio::test]
+async fn a_file_edited_while_connected_overwrites_the_other_node() -> Result<(), Box<dyn Error>> {
+    let shared: [(&str, &[u8]); 1] = [("note.txt", b"original")];
+    let a = Node::new(&shared)?;
+    let b = Node::new(&shared)?;
+    pair(&b, &a)?;
+
+    with_nodes(&a, &b, || async {
+        // 같은 내용을 각자 따로 등록해 버전이 서로 앞서지 않는다. 합쳐진 뒤에 고쳐야 한쪽이 앞선 것이 된다.
+        wait_until("양쪽의 note.txt 버전이 합쳐진다", || {
+            a.version_of("note.txt").is_some()
+                && a.version_of("note.txt") == b.version_of("note.txt")
+        })
+        .await;
+
+        // 감시가 아직 준비되지 않았을 때 고친 것은 전달되지 않을 수 있어, 건너갈 때까지 다시 쓴다.
+        let arrived = timeout(WAIT, async {
+            loop {
+                fs::write(a.root.join("note.txt"), b"edited on a").unwrap();
+                sleep(Duration::from_millis(200)).await;
+                if b.files().get("note.txt").map(Vec::as_slice) == Some(b"edited on a".as_slice()) {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(arrived.is_ok(), "b의 파일이 덮어써지지 않았다");
+    })
+    .await?;
+
+    let want = expected(&[("note.txt", b"edited on a")]);
+    assert!(a.files() == want, "a의 최종 파일 목록이 다르다");
+    assert!(b.files() == want, "b의 최종 파일 목록이 다르다");
+    Ok(())
+}
+
 /// 데몬이 꺼져 있는 동안 한쪽이 파일을 지우고 상대가 고쳤다면, 켜진 뒤 고친 파일이 지운 쪽으로 돌아와야 한다.
 ///
 /// 지금은 실패하는 것이 정상이다. 데몬이 켜질 때 핸드셰이크로 보내는 목록은 감시가 폴더를 DB에 맞추기 전의

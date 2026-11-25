@@ -222,11 +222,12 @@ fn start_fetch(
                     comparison.deleted,
                 ));
             }
-            tokio::spawn(fetch_missing(
+            tokio::spawn(fetch_entries(
                 peer,
                 root,
                 db_path.to_path_buf(),
                 comparison.missing,
+                comparison.updated,
             ));
         }
         None => debug!("등록된 루트가 없어 파일을 받거나 지우지 않습니다"),
@@ -333,12 +334,23 @@ async fn serve_file(root: Option<PathBuf>, requested: String) -> Option<FileOffe
     })
 }
 
-/// 내게 없는 파일을 상대에게서 하나씩 받아 온다. 한 파일이 실패해도 나머지는 계속 받는다.
+/// 내게 없는 파일(`missing`)과 상대가 더 최신인 파일(`updated`)을 상대에게서 하나씩 받아 온다.
+/// `updated`는 내 파일을 덮어쓴다. 한 파일이 실패해도 나머지는 계속 받는다.
 ///
 /// 파일마다 새 스트림을 쓰므로 동시에 받을 수도 있지만, 지금은 순서대로 하나씩 받는다.
-async fn fetch_missing(peer: PeerHandle, root: PathBuf, db_path: PathBuf, missing: Vec<Entry>) {
-    for entry in &missing {
-        match fetch_file(&peer, &root, &db_path, entry).await {
+async fn fetch_entries(
+    peer: PeerHandle,
+    root: PathBuf,
+    db_path: PathBuf,
+    missing: Vec<Entry>,
+    updated: Vec<Entry>,
+) {
+    let targets = missing
+        .iter()
+        .map(|entry| (entry, false))
+        .chain(updated.iter().map(|entry| (entry, true)));
+    for (entry, overwrite) in targets {
+        match fetch_file(&peer, &root, &db_path, entry, overwrite).await {
             Ok(FetchOutcome::Saved) => info!("파일을 받았습니다: {}", entry.path),
             Ok(FetchOutcome::MissingOnPeer) => {
                 warn!("상대에게 파일이 없습니다: {}", entry.path)
@@ -370,6 +382,7 @@ async fn fetch_file(
     root: &Path,
     db_path: &Path,
     entry: &Entry,
+    overwrite: bool,
 ) -> Result<FetchOutcome, EngineError> {
     let Some(mut download) = peer.request_file(&entry.path).await? else {
         return Ok(FetchOutcome::MissingOnPeer);
@@ -390,6 +403,7 @@ async fn fetch_file(
         &entry.path,
         download.size,
         download.hash,
+        overwrite,
         &mut download.reader,
     )
     .await;
@@ -432,14 +446,11 @@ fn on_index_received(mine: &[Entry], theirs: &[Entry]) -> IndexComparison {
         debug!("내게 없는 파일: {}", entry.path);
     }
 
-    // 덮어쓰기 받기와 충돌 처리는 아직 없다. 알리기만 하고 건드리지 않는다.
     for entry in &comparison.updated {
-        debug!(
-            "상대가 더 최신인 파일(덮어쓰기는 아직 없음): {}",
-            entry.path
-        );
+        debug!("상대가 더 최신인 파일: {}", entry.path);
     }
 
+    // 충돌 처리는 아직 없다. 알리기만 하고 건드리지 않는다.
     for entry in &comparison.conflicts {
         warn!(
             "양쪽에서 동시에 고친 파일(충돌 처리는 아직 없음): {}",
