@@ -50,7 +50,7 @@ fn 스냅샷_표시를_트랜잭션으로_되돌린다() -> Result<(), Box<dyn E
 }
 
 #[test]
-fn 여러_루트를_서로_다른_ID로_스냅샷_없이_추가한다() -> Result<(), Box<dyn Error>> {
+fn 여러_루트를_서로_다른_id로_스냅샷_없이_추가한다() -> Result<(), Box<dyn Error>> {
     let conn = open(Path::new(":memory:"))?;
 
     let first_id = insert_root(&conn, "/first")?;

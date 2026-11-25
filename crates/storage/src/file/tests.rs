@@ -305,7 +305,7 @@ fn 선택한_루트의_파일만_조회한다() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn 메타데이터와_함께_파일을_추가하고_ID를_반환한다() -> Result<(), Box<dyn Error>> {
+fn 메타데이터와_함께_파일을_추가하고_id를_반환한다() -> Result<(), Box<dyn Error>> {
     let conn = open(Path::new(":memory:"))?;
     let root_id = insert_root(&conn, "/example")?;
     let folder_id = insert_folder(&conn, root_id, "")?;
@@ -459,7 +459,7 @@ fn 요청한_폴더의_파일만_반환한다() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn 폴더_ID가_비었거나_없으면_파일을_반환하지_않는다() -> Result<(), Box<dyn Error>> {
+fn 폴더_id가_비었거나_없으면_파일을_반환하지_않는다() -> Result<(), Box<dyn Error>> {
     let conn = open(Path::new(":memory:"))?;
     let root = insert_root(&conn, "/first")?;
     let folder = insert_folder(&conn, root, "first")?;

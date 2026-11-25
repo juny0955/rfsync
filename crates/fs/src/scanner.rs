@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_path는_없는_경로나_파일인_부모에는_None을_반환한다() -> Result<(), FsError> {
+    fn scan_path는_없는_경로나_파일인_부모에는_none을_반환한다() -> Result<(), FsError> {
         let root = test_root()?;
         fs::write(root.join("file"), b"test")?;
 
