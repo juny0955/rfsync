@@ -12,6 +12,7 @@ use crate::error::EngineError;
 use super::{
     diff::{SnapshotDiff, calc_diff},
     entry::{portable_path, to_local_storage_file},
+    version::deleted_file_version,
 };
 
 pub fn sync_directory(
@@ -35,7 +36,7 @@ pub fn sync_directory(
     let (parent_path, name) = split_parent_and_name(target_path);
 
     if let Some(file) = rfsync_storage::get_file_by_folder_and_name(tx, root_id, parent_path, name)?
-        && !rfsync_storage::mark_file_deleted(tx, file.id)?
+        && !mark_deleted(tx, &file, me)?
     {
         return Err(EngineError::FileNotFound(target.to_path_buf()));
     }
@@ -67,7 +68,7 @@ pub fn sync_file(
         })?;
 
     // 이전에 같은 경로가 폴더였다면 아래 파일을 모두 삭제 표시
-    mark_folder_tree_deleted(tx, root_id, target_path)?;
+    mark_folder_tree_deleted(tx, root_id, target_path, me)?;
 
     let existing =
         rfsync_storage::get_file_by_folder_id_and_name(tx, root_id, parent.id, file_name)?;
@@ -97,15 +98,16 @@ pub fn remove_path(
     tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     target_path: &str,
+    me: DeviceId,
 ) -> Result<(), EngineError> {
-    mark_folder_tree_deleted(tx, root_id, target_path)?;
+    mark_folder_tree_deleted(tx, root_id, target_path, me)?;
 
     let (folder_path, file_name) = split_parent_and_name(target_path);
 
     if let Some(file) =
         rfsync_storage::get_file_by_folder_and_name(tx, root_id, folder_path, file_name)?
     {
-        rfsync_storage::mark_file_deleted(tx, file.id)?;
+        mark_deleted(tx, &file, me)?;
     }
 
     Ok(())
@@ -126,7 +128,11 @@ pub fn apply_diff(
         .collect();
 
     for (remove_file_id, path) in diff.removed_files {
-        if !rfsync_storage::mark_file_deleted(tx, remove_file_id)? {
+        let file = previous
+            .get(&remove_file_id)
+            .copied()
+            .ok_or_else(|| EngineError::FileNotFound(path.clone()))?;
+        if !mark_deleted(tx, file, me)? {
             return Err(EngineError::FileNotFound(path.clone()));
         }
     }
@@ -167,15 +173,32 @@ fn mark_folder_tree_deleted(
     tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     target_path: &str,
+    me: DeviceId,
 ) -> Result<(), EngineError> {
     let folders = rfsync_storage::get_folders_with_under_path(tx, root_id, target_path)?;
     let folder_ids: Vec<i64> = folders.iter().map(|folder| folder.id).collect();
 
     for file in rfsync_storage::get_files_in_folder_ids(tx, &folder_ids)? {
-        rfsync_storage::mark_file_deleted(tx, file.id)?;
+        mark_deleted(tx, &file, me)?;
     }
 
     Ok(())
+}
+
+/// 파일을 삭제 표시하고 version을 올린다. 이미 삭제 표시된 파일은 건드리지 않는다.
+///
+/// 이미 삭제된 파일의 version을 또 올리면 폴더 이벤트가 올 때마다 삭제 기록이 앞서 나간다.
+/// 반환값은 해당 행이 있었는지다.
+fn mark_deleted(
+    tx: &rfsync_storage::Transaction<'_>,
+    file: &File,
+    me: DeviceId,
+) -> Result<bool, EngineError> {
+    if file.deleted {
+        return Ok(true);
+    }
+    let version = deleted_file_version(file, me)?;
+    Ok(rfsync_storage::mark_file_deleted(tx, file.id, &version)?)
 }
 
 fn split_parent_and_name(target_path: &str) -> (&str, &str) {

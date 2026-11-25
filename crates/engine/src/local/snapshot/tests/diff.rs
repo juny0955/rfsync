@@ -138,7 +138,7 @@ fn does_not_report_already_deleted_file_as_removed_again() -> Result<(), Box<dyn
     let conn = rfsync_storage::open(&db)?;
     let file = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "", "gone")?
         .ok_or("missing")?;
-    rfsync_storage::mark_file_deleted(&conn, file.id)?;
+    rfsync_storage::mark_file_deleted(&conn, file.id, &file.version)?;
     fs::remove_file(root.join("gone"))?;
 
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
@@ -166,7 +166,7 @@ fn reports_recreated_file_as_modified_even_when_contents_are_identical()
     let conn = rfsync_storage::open(&db)?;
     let file = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "", "back")?
         .ok_or("missing")?;
-    rfsync_storage::mark_file_deleted(&conn, file.id)?;
+    rfsync_storage::mark_file_deleted(&conn, file.id, &file.version)?;
 
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
     let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;

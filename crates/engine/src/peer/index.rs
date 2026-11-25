@@ -127,7 +127,7 @@ mod tests {
             .into_iter()
             .find(|file| file.name == "gone.txt")
             .unwrap();
-        rfsync_storage::mark_file_deleted(&conn, gone.id).unwrap();
+        rfsync_storage::mark_file_deleted(&conn, gone.id, &gone.version).unwrap();
 
         let entries = build_index(&conn, root_id).unwrap();
 

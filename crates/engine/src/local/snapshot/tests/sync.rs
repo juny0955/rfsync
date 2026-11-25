@@ -460,3 +460,77 @@ fn recreating_a_deleted_file_moves_its_version_ahead() -> Result<(), Box<dyn Err
     assert_eq!(revived.compare(&tombstone), Causality::LocalAhead);
     Ok(())
 }
+
+#[test]
+fn deleting_a_file_raises_my_counter_in_sync_path_and_sync_root() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("by_path"), b"a")?;
+    fs::write(f.root.join("by_root"), b"b")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    // 먼저 한 번 고쳐서 내 카운터를 1로 만든다.
+    fs::write(f.root.join("by_path"), b"aa")?;
+    fs::write(f.root.join("by_root"), b"bb")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    fs::remove_file(f.root.join("by_path"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("by_path"))?;
+    fs::remove_file(f.root.join("by_root"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "", "by_path")?, my_version(2));
+    assert_eq!(stored_version(&f, "", "by_root")?, my_version(2));
+    Ok(())
+}
+
+#[test]
+fn deleting_a_folder_raises_the_counter_of_every_file_inside() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir_all(f.root.join("docs/nested"))?;
+    fs::write(f.root.join("docs/a"), b"a")?;
+    fs::write(f.root.join("docs/nested/b"), b"b")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("docs/a"), b"aa")?;
+    fs::write(f.root.join("docs/nested/b"), b"bb")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+
+    fs::remove_dir_all(f.root.join("docs"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+
+    assert_eq!(stored_version(&f, "docs", "a")?, my_version(2));
+    assert_eq!(stored_version(&f, "docs/nested", "b")?, my_version(2));
+    Ok(())
+}
+
+#[test]
+fn an_already_deleted_file_keeps_its_version_on_later_events() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    fs::write(f.root.join("docs/a"), b"a")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::remove_file(f.root.join("docs/a"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/a"))?;
+    let deleted = stored_version(&f, "docs", "a")?;
+    assert_eq!(deleted, my_version(1));
+
+    // 같은 경로와 부모 폴더의 이벤트가 다시 와도 삭제 기록은 앞서 나가지 않는다.
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/a"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "docs", "a")?, deleted);
+    Ok(())
+}
+
+#[test]
+fn replacing_a_file_with_a_folder_raises_the_old_files_counter() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("item"), b"file")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::remove_file(f.root.join("item"))?;
+    fs::create_dir(f.root.join("item"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("item"))?;
+
+    assert_eq!(stored_version(&f, "", "item")?, my_version(1));
+    Ok(())
+}

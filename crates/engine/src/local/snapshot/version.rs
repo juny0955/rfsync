@@ -8,6 +8,13 @@ pub(super) fn empty_version() -> Result<Vec<u8>, EngineError> {
     Ok(VersionVector::default().to_bytes()?)
 }
 
+/// 내가 파일을 지운 것을 DB에 반영할 때 저장할 version 바이트를 정한다.
+/// 삭제도 한 번의 변경이므로 이전 version에서 내 카운터를 올린다. 해시는 지우기 직전 내용의 것이다.
+pub(super) fn deleted_file_version(file: &File, me: DeviceId) -> Result<Vec<u8>, EngineError> {
+    let before = VersionVector::from_bytes(&file.version)?;
+    Ok(next_version(&before, &file.hash, true, None, me).to_bytes()?)
+}
+
 /// 내가 직접 본 변경을 DB에 반영할 때 저장할 version 바이트를 정한다.
 ///
 /// - 이전 행이 없으면 새 파일이므로 `{나: 1}`이다.
@@ -280,5 +287,25 @@ mod tests {
             VersionVector::from_bytes(&bytes).unwrap(),
             VersionVector::default()
         );
+    }
+
+    #[test]
+    fn 삭제하면_이전_version에서_내_카운터만_올린다() {
+        let file = stored("a", false, &vector(&[("peer", 2), ("me", 1)]));
+
+        let bytes = deleted_file_version(&file, device("me")).unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            vector(&[("peer", 2), ("me", 2)])
+        );
+    }
+
+    #[test]
+    fn 삭제할_파일의_version을_읽을_수_없으면_에러다() {
+        let mut file = stored("a", false, &VersionVector::default());
+        file.version = Vec::new();
+
+        assert!(deleted_file_version(&file, device("me")).is_err());
     }
 }

@@ -103,7 +103,7 @@ pub fn sync_path(
         // 파일
         Some(entry) => sync_file(&tx, root.id, target, &target_path, entry, me)?,
         // 스캔 결과 없음 -> 제거
-        None => remove_path(&tx, root.id, &target_path)?,
+        None => remove_path(&tx, root.id, &target_path, me)?,
     }
 
     tx.commit().map_err(StorageError::from)?;
