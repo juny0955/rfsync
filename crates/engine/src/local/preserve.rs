@@ -23,7 +23,12 @@ pub(crate) enum PreserveOutcome {
 ///
 /// 두 이름이 같은 폴더에 있어야 한다. 하드 링크로 만들어서 같은 순간의 내용이 그대로 남고,
 /// 이어서 원래 이름이 새 파일로 바뀌어도(이름 바꾸기로 덮어쓰기) 보존한 쪽은 옛 내용을 유지한다.
-/// 하드 링크를 지원하지 않는 곳에서는 내용을 복사한다.
+/// 하드 링크를 지원하지 않는 곳에서는 내용을 복사한다(`copy_exclusive`).
+///
+/// 하드 링크는 독립된 복사본이 아니다. 링크를 만든 뒤 누가 원본을 제자리에서 고치거나 줄이면(에디터의 교체 저장은
+/// 새 파일을 만들어 해당하지 않는다) 남긴 파일에도 그대로 반영된다. 그래도 내용이 사라지지는 않고 그 최신 내용이 남는다.
+/// 복사본으로 만들면 원본이 쓰이는 중에 읽어 내용이 섞일 수 있어 하드 링크를 택했다.
+/// 반환값의 해시는 남긴 시점 내용이므로, 호출한 쪽이 그 뒤 바뀌었는지 확인할 수 있다.
 ///
 /// 보존할 이름에 내용이 같은 파일이 이미 있으면 이전 시도에서 남긴 것이므로 그대로 쓰고 `Preserved`다.
 /// 받기가 실패해 같은 충돌을 다시 처리할 때 멈추지 않게 하기 위해서다. 내용이 다르면 `AlreadyExists`다.
@@ -84,12 +89,30 @@ pub(crate) fn preserve_file(
         Ok(()) => Ok(PreserveOutcome::Preserved(hash)),
         Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(PreserveOutcome::AlreadyExists),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(PreserveOutcome::SourceMissing),
-        Err(_) => match std::fs::copy(&source, &target) {
-            Ok(_) => Ok(PreserveOutcome::Preserved(hash)),
+        Err(_) => match copy_exclusive(&source, &target) {
+            Ok(()) => Ok(PreserveOutcome::Preserved(hash)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(PreserveOutcome::AlreadyExists),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(PreserveOutcome::SourceMissing),
             Err(e) => Err(e.into()),
         },
     }
+}
+
+/// `source`의 내용을 새 파일 `target`로 복사한다. `target`이 이미 있으면(다른 작업이 그 사이에 만든 파일이나
+/// 심볼릭 링크 포함) 건드리지 않고 `AlreadyExists`다. 복사 중 실패하면 반쯤 쓴 `target`을 지운다.
+fn copy_exclusive(source: &Path, target: &Path) -> std::io::Result<()> {
+    let mut from = std::fs::File::open(source)?;
+    // `create_new`는 존재 확인과 생성이 한 번에 일어나고, 있는 심볼릭 링크를 따라가지 않는다.
+    let mut to = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
+    let copied = std::io::copy(&mut from, &mut to).and_then(|_| to.sync_all());
+    if copied.is_err() {
+        drop(to);
+        let _ = std::fs::remove_file(target);
+    }
+    copied
 }
 
 /// 파일 내용의 해시.
@@ -190,6 +213,34 @@ mod tests {
             preserve_file(root.path(), "dir", "dir.conflict").unwrap(),
             PreserveOutcome::NotRegularFile
         );
+    }
+
+    #[test]
+    fn 복사는_새_파일에만_하고_이미_있으면_건드리지_않는다() {
+        let root = root_with(&[("a.txt", "mine"), ("taken.txt", "other")]);
+
+        copy_exclusive(&root.path().join("a.txt"), &root.path().join("copy.txt")).unwrap();
+        let taken =
+            copy_exclusive(&root.path().join("a.txt"), &root.path().join("taken.txt")).unwrap_err();
+
+        assert_eq!(fs::read(root.path().join("copy.txt")).unwrap(), b"mine");
+        assert_eq!(taken.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(root.path().join("taken.txt")).unwrap(), b"other");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 복사_대상이_심볼릭_링크여도_링크가_가리키는_파일을_건드리지_않는다() {
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        fs::write(&victim, "original").unwrap();
+        let root = root_with(&[("a.txt", "mine")]);
+        std::os::unix::fs::symlink(&victim, root.path().join("link.txt")).unwrap();
+
+        let result = copy_exclusive(&root.path().join("a.txt"), &root.path().join("link.txt"));
+
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&victim).unwrap(), b"original");
     }
 
     #[test]
