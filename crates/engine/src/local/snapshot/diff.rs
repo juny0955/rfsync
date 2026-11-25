@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -11,18 +11,17 @@ use crate::error::EngineError;
 #[derive(Debug)]
 pub struct SnapshotDiff<'a> {
     pub added_folders: Vec<PathBuf>,
-    pub removed_folders: HashMap<i64, PathBuf>,
 
     pub added_files: Vec<&'a FsEntry>,
     pub modified_files: HashMap<i64, &'a FsEntry>,
-    pub removed_files: HashMap<i64, PathBuf>, // removed_folder 하위 파일은 포함하지 않는다
+    /// 스캔에서 사라진 파일. 이미 삭제 표시된 파일은 포함하지 않는다.
+    pub removed_files: HashMap<i64, PathBuf>,
 }
 
 impl<'a> SnapshotDiff<'a> {
     pub fn new() -> Self {
         Self {
             added_folders: Vec::new(),
-            removed_folders: HashMap::new(),
             added_files: Vec::new(),
             modified_files: HashMap::new(),
             removed_files: HashMap::new(),
@@ -50,22 +49,18 @@ pub fn calc_diff<'a>(
 }
 
 fn diff_folder(diff: &mut SnapshotDiff, scans: &[FsEntry], stored: &[Folder]) {
-    let stored_folders: HashMap<PathBuf, i64> = stored
+    // 사라진 폴더의 행은 지우지 않는다. 지우면 CASCADE로 아래 파일의 삭제 기록도 함께 사라진다.
+    let stored_paths: HashSet<PathBuf> = stored
         .iter()
         .filter(|f| !f.relative_path.is_empty())
-        .map(|f| (PathBuf::from(&f.relative_path), f.id))
+        .map(|f| PathBuf::from(&f.relative_path))
         .collect();
 
-    let mut remaining = stored_folders;
-
     for entry in scans.iter().filter(|e| e.is_dir()) {
-        if remaining.remove(&entry.path).is_none() {
+        if !stored_paths.contains(&entry.path) {
             diff.added_folders.push(entry.path.clone());
         }
     }
-
-    diff.removed_folders
-        .extend(remaining.into_iter().map(|(path, id)| (id, path)));
 }
 
 fn diff_file<'a>(
@@ -109,7 +104,9 @@ fn diff_file<'a>(
                     let size = i64::try_from(*size)?;
                     let secs = i64::try_from(timestamp.as_secs())?;
 
-                    if size != file.size
+                    // 삭제 표시된 파일이 다시 나타났으면 내용이 같아도 수정으로 보아 되살린다.
+                    if file.deleted
+                        || size != file.size
                         || hash != &file.hash
                         || secs != file.modified_secs
                         || timestamp.subsec_nanos() != file.modified_nanos
@@ -122,16 +119,9 @@ fn diff_file<'a>(
     }
 
     for (path, file) in remaining {
-        // 삭제된 폴더 하위 파일은 CASCADE로 삭제
-        if diff
-            .removed_folders
-            .values()
-            .any(|folder| path.starts_with(folder))
-        {
-            continue;
+        if !file.deleted {
+            diff.removed_files.insert(file.id, path);
         }
-
-        diff.removed_files.insert(file.id, path);
     }
 
     Ok(())

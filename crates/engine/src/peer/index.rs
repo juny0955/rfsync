@@ -18,7 +18,8 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
         .collect();
 
     let mut entries = Vec::new();
-    for file in files {
+    // 삭제 표시된 파일은 목록에 싣지 않는다(상대에게 삭제를 알리는 것은 이후 단계).
+    for file in files.into_iter().filter(|file| !file.deleted) {
         let parent = folder_paths
             .get(&file.folder_id)
             .ok_or_else(|| EngineError::ParentFolderNotFound(PathBuf::from(&file.name)))?;
@@ -114,6 +115,25 @@ mod tests {
         assert_eq!(entries[1].path, "sub/b.txt");
         assert_eq!(entries[1].size, 6);
         assert_eq!(entries[1].hash, *blake3::hash(b"world!").as_bytes());
+    }
+
+    #[test]
+    fn 삭제_표시된_파일은_entry에_들어가지_않는다() {
+        let (_root, _db, conn, root_id) = register(&[("keep.txt", "1"), ("gone.txt", "2")]);
+        let gone = rfsync_storage::get_files_by_root_id(&conn, root_id)
+            .unwrap()
+            .into_iter()
+            .find(|file| file.name == "gone.txt")
+            .unwrap();
+        rfsync_storage::mark_file_deleted(&conn, gone.id).unwrap();
+
+        let paths: Vec<String> = build_index(&conn, root_id)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+
+        assert_eq!(paths, ["keep.txt"]);
     }
 
     #[test]

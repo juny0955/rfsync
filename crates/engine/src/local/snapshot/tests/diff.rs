@@ -41,7 +41,6 @@ fn reports_no_changes_after_initial_snapshot() -> Result<(), Box<dyn Error>> {
     let diff = calc_diff(&entries, &folders, &files)?;
 
     assert!(diff.added_folders.is_empty());
-    assert!(diff.removed_folders.is_empty());
     assert!(diff.added_files.is_empty());
     assert!(diff.modified_files.is_empty());
     assert!(diff.removed_files.is_empty());
@@ -51,7 +50,7 @@ fn reports_no_changes_after_initial_snapshot() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn reports_changes_and_excludes_files_in_removed_folders() -> Result<(), Box<dyn Error>> {
+fn reports_changes_and_removes_files_in_removed_folders() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db = dir.join("snapshot.db");
@@ -64,13 +63,6 @@ fn reports_changes_and_excludes_files_in_removed_folders() -> Result<(), Box<dyn
     let conn = rfsync_storage::open(&db)?;
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
     let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;
-    let folder_id = |path: &str| {
-        folders
-            .iter()
-            .find(|f| f.relative_path == path)
-            .map(|f| f.id)
-            .ok_or("missing folder")
-    };
     let file_id = |name: &str| {
         files
             .iter()
@@ -94,15 +86,6 @@ fn reports_changes_and_excludes_files_in_removed_folders() -> Result<(), Box<dyn
         &diff.added_files[0].kind,
         FsEntryKind::File { size: 3, .. }
     ));
-    assert_eq!(diff.removed_folders.len(), 2);
-    assert_eq!(
-        diff.removed_folders.get(&folder_id("removed")?),
-        Some(&PathBuf::from("removed"))
-    );
-    assert_eq!(
-        diff.removed_folders.get(&folder_id("removed/nested")?),
-        Some(&PathBuf::from("removed/nested"))
-    );
     assert_eq!(diff.modified_files.len(), 1);
     let modified = diff
         .modified_files
@@ -110,10 +93,14 @@ fn reports_changes_and_excludes_files_in_removed_folders() -> Result<(), Box<dyn
         .ok_or("missing modified file")?;
     assert_eq!(modified.path, PathBuf::from("modified"));
     assert!(matches!(&modified.kind, FsEntryKind::File { size: 12, .. }));
-    assert_eq!(diff.removed_files.len(), 1);
+    assert_eq!(diff.removed_files.len(), 2);
     assert_eq!(
         diff.removed_files.get(&file_id("deleted")?),
         Some(&PathBuf::from("deleted"))
+    );
+    assert_eq!(
+        diff.removed_files.get(&file_id("file")?),
+        Some(&PathBuf::from("removed/nested/file"))
     );
     drop(conn);
     fs::remove_dir_all(dir)?;
@@ -136,5 +123,59 @@ fn rejects_file_with_missing_parent_folder() -> Result<(), Box<dyn Error>> {
     assert!(
         matches!(result, Err(EngineError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData)
     );
+    Ok(())
+}
+
+#[test]
+fn does_not_report_already_deleted_file_as_removed_again() -> Result<(), Box<dyn Error>> {
+    let dir = test_dir()?;
+    let root = dir.join("root");
+    let db = dir.join("snapshot.db");
+    fs::create_dir(&root)?;
+    fs::write(root.join("gone"), b"old")?;
+    let root_id = register_root(&root, &db)?;
+    let conn = rfsync_storage::open(&db)?;
+    let file = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "", "gone")?
+        .ok_or("missing")?;
+    rfsync_storage::mark_file_deleted(&conn, file.id)?;
+    fs::remove_file(root.join("gone"))?;
+
+    let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
+    let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;
+    let entries = rfsync_fs::scan(&root)?;
+    let diff = calc_diff(&entries, &folders, &files)?;
+
+    assert!(diff.removed_files.is_empty());
+    assert!(diff.added_files.is_empty());
+    assert!(diff.modified_files.is_empty());
+    drop(conn);
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn reports_recreated_file_as_modified_even_when_contents_are_identical()
+-> Result<(), Box<dyn Error>> {
+    let dir = test_dir()?;
+    let root = dir.join("root");
+    let db = dir.join("snapshot.db");
+    fs::create_dir(&root)?;
+    fs::write(root.join("back"), b"same")?;
+    let root_id = register_root(&root, &db)?;
+    let conn = rfsync_storage::open(&db)?;
+    let file = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "", "back")?
+        .ok_or("missing")?;
+    rfsync_storage::mark_file_deleted(&conn, file.id)?;
+
+    let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
+    let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;
+    let entries = rfsync_fs::scan(&root)?;
+    let diff = calc_diff(&entries, &folders, &files)?;
+
+    assert_eq!(diff.modified_files.len(), 1);
+    assert!(diff.modified_files.contains_key(&file.id));
+    assert!(diff.added_files.is_empty());
+    drop(conn);
+    fs::remove_dir_all(dir)?;
     Ok(())
 }

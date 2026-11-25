@@ -48,7 +48,9 @@ fn sync_path_converts_nested_file_to_folder() -> Result<(), Box<dyn Error>> {
     sync_path_for_test(root_id, &db, Path::new("docs/item"))?;
 
     let conn = rfsync_storage::open(&db)?;
-    assert!(rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "item")?.is_none());
+    let old = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "item")?
+        .ok_or("tombstone was removed")?;
+    assert!(old.deleted);
     let child = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs/item", "child")?
         .ok_or("missing child")?;
     assert_eq!(child.size, 3);
@@ -70,11 +72,19 @@ fn deleting_nested_folder_preserves_similar_sibling() -> Result<(), Box<dyn Erro
     sync_path_for_test(root_id, &db, Path::new("docs/item"))?;
 
     let conn = rfsync_storage::open(&db)?;
-    assert!(rfsync_storage::get_folders_with_under_path(&conn, root_id, "docs/item")?.is_empty());
-    assert!(
-        rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs/item-old", "keep")?
-            .is_some()
+    // 폴더 행은 남고 안의 파일만 삭제 표시된다. 이름이 비슷한 옆 폴더는 그대로다.
+    assert_eq!(
+        rfsync_storage::get_folders_with_under_path(&conn, root_id, "docs/item")?.len(),
+        2
     );
+    let removed =
+        rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs/item/nested", "file")?
+            .ok_or("tombstone was removed")?;
+    assert!(removed.deleted);
+    let sibling =
+        rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs/item-old", "keep")?
+            .ok_or("missing sibling file")?;
+    assert!(!sibling.deleted);
     Ok(())
 }
 
@@ -95,10 +105,13 @@ fn sync_path_does_not_modify_other_root() -> Result<(), Box<dyn Error>> {
     sync_path_for_test(first_id, &db, Path::new("docs"))?;
 
     let conn = rfsync_storage::open(&db)?;
-    assert!(rfsync_storage::get_folders_with_under_path(&conn, first_id, "docs")?.is_empty());
+    let removed = rfsync_storage::get_file_by_folder_and_name(&conn, first_id, "docs", "file")?
+        .ok_or("tombstone was removed")?;
+    assert!(removed.deleted);
     let other = rfsync_storage::get_file_by_folder_and_name(&conn, second_id, "docs", "file")?
         .ok_or("other root changed")?;
     assert_eq!(other.size, 8);
+    assert!(!other.deleted);
     Ok(())
 }
 
@@ -122,7 +135,11 @@ fn repeated_folder_and_deleted_path_syncs_preserve_snapshot() -> Result<(), Box<
     fs::remove_dir_all(root.join("docs"))?;
     sync_path_for_test(root_id, &db, Path::new("docs"))?;
     sync_path_for_test(root_id, &db, Path::new("docs"))?;
-    assert!(rfsync_storage::get_folders_with_under_path(&conn, root_id, "docs")?.is_empty());
+    // 폴더 행은 남고 파일은 삭제 표시만 된다.
+    assert!(!rfsync_storage::get_folders_with_under_path(&conn, root_id, "docs")?.is_empty());
+    let after = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "docs", "file")?
+        .ok_or("tombstone was removed")?;
+    assert!(after.deleted);
     Ok(())
 }
 

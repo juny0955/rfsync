@@ -93,6 +93,7 @@ fn watcher_updates_snapshot_for_real_file_events() -> Result<(), Box<dyn Error>>
     let file_size = |name: &str| -> Result<Option<i64>, Box<dyn Error>> {
         Ok(
             rfsync_storage::get_file_by_folder_id_and_name(&conn, root_id, root_folder.id, name)?
+                .filter(|file| !file.deleted)
                 .map(|file| file.size),
         )
     };
@@ -154,6 +155,7 @@ fn watcher_reconciles_changes_made_before_start() -> Result<(), Box<dyn Error>> 
     loop {
         let mut files: Vec<_> = rfsync_storage::get_files_by_root_id(&conn, root_id)?
             .into_iter()
+            .filter(|file| !file.deleted)
             .map(|file| (file.name, file.size))
             .collect();
         files.sort();
