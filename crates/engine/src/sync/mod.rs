@@ -19,9 +19,9 @@ use tracing::{debug, info, warn};
 use crate::{
     error::EngineError,
     local::{
-        DeleteOutcome, PreserveOutcome, clear_pending, delete_if_unchanged, first_root_path,
-        merge_versions, open_for_serving, preserve_file, record_pending, save_received_file,
-        spawn_watcher,
+        DeleteOutcome, OnExisting, PreserveOutcome, clear_pending, delete_if_unchanged,
+        first_root_path, merge_versions, open_for_serving, preserve_file, record_pending,
+        save_received_file, spawn_watcher,
     },
     peer::{self, FileOffer, Identity, PeerEvent, PeerHandle, load_index},
     sync::{
@@ -244,7 +244,7 @@ fn start_fetch(
                 root,
                 db_path.to_path_buf(),
                 comparison.missing,
-                comparison.updated,
+                with_local_hashes(mine, comparison.updated),
             ));
         }
         None => debug!("등록된 루트가 없어 파일을 받거나 지우지 않습니다"),
@@ -351,8 +351,19 @@ async fn serve_file(root: Option<PathBuf>, requested: String) -> Option<FileOffe
     })
 }
 
+/// 비교할 때 내 목록에 있던 파일의 해시를 항목에 붙인다. 덮어쓰기 직전에 내 파일이 그대로인지 확인하는 기준이다.
+fn with_local_hashes(mine: &[Entry], entries: Vec<Entry>) -> Vec<(Entry, [u8; 32])> {
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let local = mine.iter().find(|local| local.path == entry.path)?;
+            Some((entry.clone(), local.hash))
+        })
+        .collect()
+}
+
 /// 내게 없는 파일(`missing`)과 상대가 더 최신인 파일(`updated`)을 상대에게서 하나씩 받아 온다.
-/// `updated`는 내 파일을 덮어쓴다. 한 파일이 실패해도 나머지는 계속 받는다.
+/// `updated`는 비교할 때의 내 파일(짝의 해시)이 그대로일 때만 덮어쓴다. 한 파일이 실패해도 나머지는 계속 받는다.
 ///
 /// 파일마다 새 스트림을 쓰므로 동시에 받을 수도 있지만, 지금은 순서대로 하나씩 받는다.
 async fn fetch_entries(
@@ -360,14 +371,15 @@ async fn fetch_entries(
     root: PathBuf,
     db_path: PathBuf,
     missing: Vec<Entry>,
-    updated: Vec<Entry>,
+    updated: Vec<(Entry, [u8; 32])>,
 ) {
-    let targets = missing
-        .iter()
-        .map(|entry| (entry, false))
-        .chain(updated.iter().map(|entry| (entry, true)));
-    for (entry, overwrite) in targets {
-        match fetch_file(&peer, &root, &db_path, entry, overwrite).await {
+    let targets = missing.iter().map(|entry| (entry, OnExisting::Fail)).chain(
+        updated
+            .iter()
+            .map(|(entry, local_hash)| (entry, OnExisting::ReplaceIfHash(*local_hash))),
+    );
+    for (entry, on_existing) in targets {
+        match fetch_file(&peer, &root, &db_path, entry, on_existing).await {
             Ok(FetchOutcome::Saved) => info!("파일을 받았습니다: {}", entry.path),
             Ok(FetchOutcome::MissingOnPeer) => {
                 warn!("상대에게 파일이 없습니다: {}", entry.path)
@@ -378,6 +390,10 @@ async fn fetch_entries(
                     entry.path
                 )
             }
+            Ok(FetchOutcome::ChangedLocally) => info!(
+                "받는 동안 내 파일이 바뀌어 덮어쓰지 않았습니다: {}",
+                entry.path
+            ),
             Err(e) => warn!("파일을 받지 못했습니다: {}: {e}", entry.path),
         }
     }
@@ -439,7 +455,7 @@ async fn resolve_conflicts(
             continue;
         };
         match outcome {
-            PreserveOutcome::Preserved => {
+            PreserveOutcome::Preserved(_) => {
                 info!("동시에 고쳐 내가 져서 내 파일을 남겼습니다: {preserved}")
             }
             PreserveOutcome::SourceMissing => debug!("남길 파일이 이미 없습니다: {}", mine.path),
@@ -455,7 +471,12 @@ async fn resolve_conflicts(
 
         let mut incoming = theirs;
         incoming.version.merge(&mine.version);
-        match fetch_file(&peer, &root, &db_path, &incoming, true).await {
+        // 남긴 내용 그대로일 때만 덮어쓴다. 남긴 뒤 받는 동안 또 고쳤다면 그 수정을 잃지 않도록 멈춘다.
+        let on_existing = match outcome {
+            PreserveOutcome::Preserved(hash) => OnExisting::ReplaceIfHash(hash),
+            _ => OnExisting::Fail,
+        };
+        match fetch_file(&peer, &root, &db_path, &incoming, on_existing).await {
             Ok(FetchOutcome::Saved) => {
                 info!("충돌에서 이긴 상대의 파일로 바꿨습니다: {}", incoming.path)
             }
@@ -464,6 +485,10 @@ async fn resolve_conflicts(
             }
             Ok(FetchOutcome::ChangedOnPeer) => warn!(
                 "목록을 받은 뒤 상대의 파일이 바뀌어 받지 않습니다: {}",
+                incoming.path
+            ),
+            Ok(FetchOutcome::ChangedLocally) => info!(
+                "남긴 뒤 내 파일이 또 바뀌어 덮어쓰지 않았습니다: {}",
                 incoming.path
             ),
             Err(e) => warn!(
@@ -518,6 +543,8 @@ enum FetchOutcome {
     MissingOnPeer,
     /// 상대가 알려 준 크기나 해시가 목록의 값과 달라, 목록을 받은 뒤 파일이 바뀐 것이다.
     ChangedOnPeer,
+    /// 받는 동안 내 파일이 바뀌어 덮어쓰지 않았다. 다음 비교가 새 상태로 다시 판단한다.
+    ChangedLocally,
 }
 
 /// 파일 하나를 요청하고, 응답 헤더가 목록의 값과 같을 때만 내용을 받아 저장한다.
@@ -526,7 +553,7 @@ async fn fetch_file(
     root: &Path,
     db_path: &Path,
     entry: &Entry,
-    overwrite: bool,
+    on_existing: OnExisting,
 ) -> Result<FetchOutcome, EngineError> {
     let Some(mut download) = peer.request_file(&entry.path).await? else {
         return Ok(FetchOutcome::MissingOnPeer);
@@ -547,14 +574,17 @@ async fn fetch_file(
         &entry.path,
         download.size,
         download.hash,
-        overwrite,
+        on_existing,
         &mut download.reader,
     )
     .await;
     if let Err(e) = saved {
         // 파일이 생기지 않았으므로 기록도 지운다.
         clear_pending_logged(db_path, &entry.path).await;
-        return Err(e);
+        return match e {
+            EngineError::LocalChanged(_) => Ok(FetchOutcome::ChangedLocally),
+            e => Err(e),
+        };
     }
     Ok(FetchOutcome::Saved)
 }

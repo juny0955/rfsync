@@ -9,7 +9,8 @@ use crate::error::EngineError;
 /// `preserve_file`의 결과.
 #[derive(Debug, PartialEq)]
 pub(crate) enum PreserveOutcome {
-    Preserved,
+    /// 남겼다. 값은 남긴 시점 내용의 해시다. 이어서 이 파일을 새 내용으로 바꿀 때 그 사이에 또 바뀌었는지 확인하는 데 쓴다.
+    Preserved([u8; 32]),
     /// 보존할 파일이 이미 없다. 지킬 내용이 없으니 할 일이 없다.
     SourceMissing,
     /// 일반 파일이 아니다(폴더, 심볼릭 링크 등). 보존하지 않는다.
@@ -65,38 +66,38 @@ pub(crate) fn preserve_file(
     if !metadata.is_file() {
         return Ok(PreserveOutcome::NotRegularFile);
     }
+    let hash = match hash_file(&source) {
+        Ok(hash) => hash,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(PreserveOutcome::SourceMissing),
+        Err(e) => return Err(e.into()),
+    };
     if let Ok(existing) = target.symlink_metadata() {
-        let same = existing.is_file() && same_content(&source, &target)?;
+        let same = existing.is_file() && hash_file(&target)? == hash;
         return Ok(if same {
-            PreserveOutcome::Preserved
+            PreserveOutcome::Preserved(hash)
         } else {
             PreserveOutcome::AlreadyExists
         });
     }
 
     match std::fs::hard_link(&source, &target) {
-        Ok(()) => Ok(PreserveOutcome::Preserved),
+        Ok(()) => Ok(PreserveOutcome::Preserved(hash)),
         Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(PreserveOutcome::AlreadyExists),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(PreserveOutcome::SourceMissing),
         Err(_) => match std::fs::copy(&source, &target) {
-            Ok(_) => Ok(PreserveOutcome::Preserved),
+            Ok(_) => Ok(PreserveOutcome::Preserved(hash)),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(PreserveOutcome::SourceMissing),
             Err(e) => Err(e.into()),
         },
     }
 }
 
-/// 두 파일의 내용이 같은가. 크기가 다르면 읽지 않고 다르다고 본다.
-fn same_content(a: &Path, b: &Path) -> Result<bool, EngineError> {
-    if a.metadata()?.len() != b.metadata()?.len() {
-        return Ok(false);
-    }
-    let hash = |path: &Path| -> std::io::Result<blake3::Hash> {
-        Ok(blake3::Hasher::new()
-            .update_reader(&mut std::fs::File::open(path)?)?
-            .finalize())
-    };
-    Ok(hash(a)? == hash(b)?)
+/// 파일 내용의 해시.
+fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
+    let hash = blake3::Hasher::new()
+        .update_reader(&mut std::fs::File::open(path)?)?
+        .finalize();
+    Ok(*hash.as_bytes())
 }
 
 #[cfg(test)]
@@ -106,6 +107,10 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn hash_of(content: &[u8]) -> [u8; 32] {
+        *blake3::hash(content).as_bytes()
+    }
 
     fn root_with(files: &[(&str, &str)]) -> TempDir {
         let root = tempfile::tempdir().unwrap();
@@ -123,7 +128,7 @@ mod tests {
 
         let outcome = preserve_file(root.path(), "sub/a.txt", "sub/a.conflict.txt").unwrap();
 
-        assert_eq!(outcome, PreserveOutcome::Preserved);
+        assert_eq!(outcome, PreserveOutcome::Preserved(hash_of(b"mine")));
         assert_eq!(fs::read(root.path().join("sub/a.txt")).unwrap(), b"mine");
         assert_eq!(
             fs::read(root.path().join("sub/a.conflict.txt")).unwrap(),
@@ -153,7 +158,7 @@ mod tests {
 
         let outcome = preserve_file(root.path(), "a.txt", "a.conflict.txt").unwrap();
 
-        assert_eq!(outcome, PreserveOutcome::Preserved);
+        assert_eq!(outcome, PreserveOutcome::Preserved(hash_of(b"mine")));
     }
 
     #[test]

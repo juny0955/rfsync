@@ -15,7 +15,7 @@ mod watcher;
 pub(crate) use merge::merge_versions;
 pub(crate) use pending::{clear_pending, record_pending};
 pub(crate) use preserve::{PreserveOutcome, preserve_file};
-pub(crate) use receive::save_received_file;
+pub(crate) use receive::{OnExisting, save_received_file};
 pub(crate) use remove::{DeleteOutcome, delete_if_unchanged};
 pub(crate) use root::first_root_path;
 pub use root::register_root;
