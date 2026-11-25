@@ -156,10 +156,11 @@ async fn hold_connection(
             }
             info!("상대 파일 목록 {}개를 받았습니다", peer.index.len());
 
+            let handle = PeerHandle::new(conn.clone(), updates.clone());
             if events
                 .send(PeerEvent::IndexReceived {
                     index: peer.index.clone(),
-                    peer: PeerHandle::new(conn.clone(), updates.clone()),
+                    peer: handle.clone(),
                 })
                 .await
                 .is_err()
@@ -170,7 +171,7 @@ async fn hold_connection(
             // 핸드셰이크가 끝난 연결에서만 상대의 파일 요청을 받는다.
             tasks.spawn(serve_requests(conn.clone(), events.clone()));
             // 읽기와 쓰기를 따로 돌린다. 프레임 읽기는 select!로 중간에 끊으면 안 되기 때문이다.
-            tasks.spawn(read_updates(stream.recv, events.clone()));
+            tasks.spawn(read_updates(stream.recv, handle, events.clone()));
             tasks.spawn(write_updates(stream.send, updates_rx));
         }
         Err(e) => warn!("핸드셰이크 실패: {e}"),
@@ -183,12 +184,15 @@ async fn hold_connection(
 }
 
 /// 상대가 제어 스트림으로 보내는 `IndexUpdate`를 연결이 끝날 때까지 coordinator에게 전달한다.
-async fn read_updates(mut recv: QuicRecvStream, events: Sender<PeerEvent>) {
+async fn read_updates(mut recv: QuicRecvStream, peer: PeerHandle, events: Sender<PeerEvent>) {
     loop {
         match read_frame(&mut recv).await {
             Ok(Message::IndexUpdate { entries }) => {
                 if events
-                    .send(PeerEvent::IndexUpdated { entries })
+                    .send(PeerEvent::IndexUpdated {
+                        entries,
+                        peer: peer.clone(),
+                    })
                     .await
                     .is_err()
                 {

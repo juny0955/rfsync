@@ -1054,7 +1054,7 @@ async fn forwards_an_index_update_from_the_peer_as_an_event() -> Result<(), Box<
             let event = timeout(TIMEOUT, received.recv())
                 .await?
                 .ok_or("이벤트 통로가 닫혔다")?;
-            let PeerEvent::IndexUpdated { entries } = event else {
+            let PeerEvent::IndexUpdated { entries, .. } = event else {
                 return Err("IndexUpdated가 아니다".into());
             };
             assert_eq!(entries, vec![entry("new.txt")]);

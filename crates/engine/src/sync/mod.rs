@@ -48,20 +48,9 @@ async fn run_coordinator(
             PeerEvent::IndexReceived {
                 index: peer_index,
                 peer,
-            } => {
-                let comparison = on_index_received(&index, &peer_index);
-                match root.clone() {
-                    // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
-                    Some(root) => {
-                        tokio::spawn(fetch_missing(peer, root, comparison.missing));
-                    }
-                    None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
-                }
-            }
-            PeerEvent::IndexUpdated { entries } => {
-                // 임시: 아직 처리하지 않고 받았다는 것만 남긴다. 비교와 받아 오기는 다음 단계에서 붙인다.
-                debug!("상대의 변경 {}개를 받았습니다", entries.len());
-            }
+            } => start_fetch(&index, &root, peer, &peer_index),
+            // 연결된 뒤의 변경도 첫 목록과 같은 비교와 받아 오기를 거친다. 바뀐 항목만 들어 있다.
+            PeerEvent::IndexUpdated { entries, peer } => start_fetch(&index, &root, peer, &entries),
             PeerEvent::FileRequested { path, reply } => {
                 // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
                 let root = root.clone();
@@ -72,6 +61,18 @@ async fn run_coordinator(
                 });
             }
         }
+    }
+}
+
+/// 상대의 목록(또는 변경 목록)을 내 목록과 비교해, 내게 없는 파일을 받아 오는 작업을 띄운다.
+fn start_fetch(mine: &[Entry], root: &Option<PathBuf>, peer: PeerHandle, theirs: &[Entry]) {
+    let comparison = on_index_received(mine, theirs);
+    match root.clone() {
+        // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
+        Some(root) => {
+            tokio::spawn(fetch_missing(peer, root, comparison.missing));
+        }
+        None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
     }
 }
 
