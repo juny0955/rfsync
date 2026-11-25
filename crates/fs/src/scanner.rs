@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_distinct_test_roots_concurrently() -> Result<(), FsError> {
+    fn 동시에_만든_테스트_루트는_서로_다르다() -> Result<(), FsError> {
         let barrier = std::sync::Barrier::new(16);
         let roots = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..16)
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_path_reads_file_metadata_and_hash() -> Result<(), FsError> {
+    fn scan_path는_파일의_메타데이터와_해시를_읽는다() -> Result<(), FsError> {
         let root = test_root()?;
         fs::create_dir(root.join("nested"))?;
         fs::write(root.join("nested/file"), b"test")?;
@@ -203,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_path_returns_directory_without_scanning_children() -> Result<(), FsError> {
+    fn scan_path는_디렉터리의_자식을_스캔하지_않고_반환한다() -> Result<(), FsError> {
         let root = test_root()?;
         fs::create_dir(root.join("nested"))?;
         fs::write(root.join("nested/file"), b"test")?;
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_path_returns_none_for_missing_path_or_file_parent() -> Result<(), FsError> {
+    fn scan_path는_없는_경로나_파일인_부모에는_None을_반환한다() -> Result<(), FsError> {
         let root = test_root()?;
         fs::write(root.join("file"), b"test")?;
 
@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_path_rejects_invalid_relative_paths() {
+    fn scan_path는_잘못된_상대_경로를_거부한다() {
         for path in [Path::new(""), Path::new("../file"), Path::new("/file")] {
             assert!(matches!(scan_path(Path::new("unused"), path),
                 Err(FsError::InvalidRelativePath(invalid)) if invalid == path));
@@ -237,7 +237,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn scan_path_excludes_final_and_intermediate_symlinks() -> Result<(), FsError> {
+    fn scan_path는_마지막과_중간의_심볼릭_링크를_제외한다() -> Result<(), FsError> {
         let root = test_root()?;
         fs::create_dir(root.join("nested"))?;
         fs::write(root.join("nested/file"), b"test")?;
@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn scans_nested_files_and_empty_directories() -> Result<(), FsError> {
+    fn 중첩된_파일과_빈_디렉터리를_스캔한다() -> Result<(), FsError> {
         let name = format!(
             "rfsync-scan-{}-{}",
             std::process::id(),
@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn hashes_file_contents() -> Result<(), FsError> {
+    fn 파일_내용을_해시한다() -> Result<(), FsError> {
         let root = std::env::temp_dir().join(format!(
             "rfsync-hash-{}-{}",
             std::process::id(),
@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_error_for_invalid_root() {
+    fn 잘못된_루트는_에러를_반환한다() {
         assert!(matches!(
             scan(Path::new("\0")),
             Err(FsError::Scan(error)) if error.kind() == std::io::ErrorKind::InvalidInput
