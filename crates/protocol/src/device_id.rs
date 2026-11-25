@@ -21,11 +21,17 @@ mod tests {
 
     #[test]
     fn 같은_인증서는_같은_id다() {
-        assert_eq!(DeviceId::from_cert(b"cert-a"), DeviceId::from_cert(b"cert-a"));
+        assert_eq!(
+            DeviceId::from_cert(b"cert-a"),
+            DeviceId::from_cert(b"cert-a")
+        );
     }
 
     #[test]
     fn 다른_인증서는_다른_id다() {
-        assert_ne!(DeviceId::from_cert(b"cert-a"), DeviceId::from_cert(b"cert-b"));
+        assert_ne!(
+            DeviceId::from_cert(b"cert-a"),
+            DeviceId::from_cert(b"cert-b")
+        );
     }
 }
