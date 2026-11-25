@@ -98,7 +98,7 @@ fn watcher_updates_snapshot_for_real_file_events() -> Result<(), Box<dyn Error>>
         )
     };
 
-    // An observed event confirms the watcher is ready before the actual scenario.
+    // 감시자가 이벤트를 관측했다면 준비된 것이므로, 본 시나리오는 그 뒤에 시작한다.
     let deadline = Instant::now() + Duration::from_secs(10);
     while file_size("ready")?.is_none() {
         if let Some(status) = watcher.0.try_wait()? {
