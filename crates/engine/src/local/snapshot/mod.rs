@@ -16,6 +16,7 @@ use self::entry::{portable_path, to_storage_file};
 mod diff;
 mod entry;
 mod sync;
+mod version;
 
 pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<(), EngineError> {
     let root =
