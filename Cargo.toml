@@ -5,6 +5,7 @@ members = [
     "apps/daemon",
     "crates/engine",
     "crates/fs",
+    "crates/ipc",
     "crates/network",
     "crates/storage",
     "crates/protocol",

@@ -6,8 +6,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{create_initial_snapshot_for_test, sync_path_for_test, sync_root_for_test};
-use crate::{error::EngineError, watch_path, watch_root};
+use rfsync_protocol::{Causality, VersionVector};
+
+use super::{
+    create_initial_snapshot_for_test, sync_path_for_test, sync_root_for_test, test_device,
+};
+use crate::{error::EngineError, watch_root};
 
 type Snapshot = (Vec<String>, Vec<(String, i64)>);
 
@@ -263,10 +267,7 @@ fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error
 fn synchronization_rejects_uninitialized_root() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     assert!(
-        matches!(watch_root(f.root_id, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
-    );
-    assert!(
-        matches!(watch_path(&f.root, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
+        matches!(watch_root(f.root_id, &f.db, super::test_device()), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
     );
     Ok(())
 }
@@ -327,5 +328,353 @@ fn deleting_a_folder_keeps_tombstones_of_files_inside() -> Result<(), Box<dyn Er
         .ok_or("tombstone was removed")?;
     assert!(file.deleted);
     assert!(f.snapshot()?.1.is_empty());
+    Ok(())
+}
+
+/// 내가 `times`번 고친 파일의 version.
+fn my_version(times: u32) -> VersionVector {
+    let mut version = VersionVector::default();
+    for _ in 0..times {
+        version.bump(test_device());
+    }
+    version
+}
+
+fn stored_version(f: &Fixture, folder: &str, name: &str) -> Result<VersionVector, Box<dyn Error>> {
+    let conn = rfsync_storage::open(&f.db)?;
+    let file = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, folder, name)?
+        .ok_or("missing file")?;
+    Ok(VersionVector::from_bytes(&file.version)?)
+}
+
+#[test]
+fn sync_root_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("new"), b"hello")?;
+
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "", "new")?, my_version(1));
+    Ok(())
+}
+
+#[test]
+fn sync_path_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("docs/new"), b"hello")?;
+
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/new"))?;
+
+    assert_eq!(stored_version(&f, "docs", "new")?, my_version(1));
+    Ok(())
+}
+
+#[test]
+fn sync_root_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+
+    fs::write(f.root.join("memo"), b"three")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(3));
+    Ok(())
+}
+
+#[test]
+fn sync_path_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+
+    fs::write(f.root.join("memo"), b"three")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(3));
+    Ok(())
+}
+
+#[test]
+fn changing_only_the_modified_time_keeps_the_version() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    let conn = rfsync_storage::open(&f.db)?;
+    let before = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+
+    // 내용은 그대로 두고 수정 시각만 한 시간 앞으로 돌린다.
+    let earlier = SystemTime::now() - std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(f.root.join("memo"))?
+        .set_modified(earlier)?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    let after_root = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+    // 수정 시각은 실제로 갱신됐지만 version은 그대로다.
+    assert_ne!(after_root.modified_secs, before.modified_secs);
+    assert_eq!(after_root.version, before.version);
+
+    let earlier = earlier - std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(f.root.join("memo"))?
+        .set_modified(earlier)?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    let after_path = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+    assert_ne!(after_path.modified_secs, after_root.modified_secs);
+    assert_eq!(after_path.version, before.version);
+    Ok(())
+}
+
+#[test]
+fn recreating_a_deleted_file_moves_its_version_ahead() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    fs::remove_file(f.root.join("memo"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    let tombstone = stored_version(&f, "", "memo")?;
+
+    // 같은 내용으로 다시 만들어도 삭제 기록보다 앞서야 상대가 새 변경으로 받는다.
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    let revived = stored_version(&f, "", "memo")?;
+    assert_eq!(revived.compare(&tombstone), Causality::LocalAhead);
+    Ok(())
+}
+
+#[test]
+fn deleting_a_file_raises_my_counter_in_sync_path_and_sync_root() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("by_path"), b"a")?;
+    fs::write(f.root.join("by_root"), b"b")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    // 초기 스냅샷이 1이고, 한 번 고쳐서 2로 만든다.
+    fs::write(f.root.join("by_path"), b"aa")?;
+    fs::write(f.root.join("by_root"), b"bb")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    fs::remove_file(f.root.join("by_path"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("by_path"))?;
+    fs::remove_file(f.root.join("by_root"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "", "by_path")?, my_version(3));
+    assert_eq!(stored_version(&f, "", "by_root")?, my_version(3));
+    Ok(())
+}
+
+#[test]
+fn deleting_a_folder_raises_the_counter_of_every_file_inside() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir_all(f.root.join("docs/nested"))?;
+    fs::write(f.root.join("docs/a"), b"a")?;
+    fs::write(f.root.join("docs/nested/b"), b"b")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("docs/a"), b"aa")?;
+    fs::write(f.root.join("docs/nested/b"), b"bb")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+
+    fs::remove_dir_all(f.root.join("docs"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+
+    assert_eq!(stored_version(&f, "docs", "a")?, my_version(3));
+    assert_eq!(stored_version(&f, "docs/nested", "b")?, my_version(3));
+    Ok(())
+}
+
+#[test]
+fn an_already_deleted_file_keeps_its_version_on_later_events() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    fs::write(f.root.join("docs/a"), b"a")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::remove_file(f.root.join("docs/a"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/a"))?;
+    let deleted = stored_version(&f, "docs", "a")?;
+    assert_eq!(deleted, my_version(2));
+
+    // 같은 경로와 부모 폴더의 이벤트가 다시 와도 삭제 기록은 앞서 나가지 않는다.
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/a"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "docs", "a")?, deleted);
+    Ok(())
+}
+
+#[test]
+fn replacing_a_file_with_a_folder_raises_the_old_files_counter() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("item"), b"file")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::remove_file(f.root.join("item"))?;
+    fs::create_dir(f.root.join("item"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("item"))?;
+
+    assert_eq!(stored_version(&f, "", "item")?, my_version(2));
+    Ok(())
+}
+
+/// 상대에게서 받는 중이라는 기록을 남긴다. `content`는 받는 파일의 내용이다.
+fn put_pending(
+    f: &Fixture,
+    path: &str,
+    content: &[u8],
+    deleted: bool,
+    version: &VersionVector,
+) -> Result<(), Box<dyn Error>> {
+    let conn = rfsync_storage::open(&f.db)?;
+    rfsync_storage::put_sync_pending(
+        &conn,
+        f.root_id,
+        &rfsync_storage::SyncPending {
+            path: path.to_owned(),
+            hash: blake3::hash(content).to_hex().to_string(),
+            deleted,
+            version: version.to_bytes()?,
+        },
+    )?;
+    Ok(())
+}
+
+fn pending_left(f: &Fixture, path: &str) -> Result<bool, Box<dyn Error>> {
+    let conn = rfsync_storage::open(&f.db)?;
+    Ok(rfsync_storage::take_sync_pending(&conn, f.root_id, path)?.is_some())
+}
+
+fn peer_version(times: u32) -> VersionVector {
+    let mut version = VersionVector::default();
+    for _ in 0..times {
+        version.bump(rfsync_protocol::DeviceId::from_cert(b"peer"));
+    }
+    version
+}
+
+#[test]
+fn a_received_file_keeps_the_peers_version_in_sync_path_and_sync_root() -> Result<(), Box<dyn Error>>
+{
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::write(f.root.join("docs/by_path"), b"one")?;
+    put_pending(&f, "docs/by_path", b"one", false, &peer_version(2))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/by_path"))?;
+    fs::write(f.root.join("by_root"), b"two")?;
+    put_pending(&f, "by_root", b"two", false, &peer_version(3))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "docs", "by_path")?, peer_version(2));
+    assert_eq!(stored_version(&f, "", "by_root")?, peer_version(3));
+    // 쓴 기록은 지워지고, 같은 파일에 이어 오는 이벤트는 version을 바꾸지 않는다.
+    assert!(!pending_left(&f, "docs/by_path")?);
+    assert!(!pending_left(&f, "by_root")?);
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/by_path"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    assert_eq!(stored_version(&f, "docs", "by_path")?, peer_version(2));
+    Ok(())
+}
+
+#[test]
+fn editing_a_received_file_again_merges_the_peers_history_and_raises_mine()
+-> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("memo"), b"received")?;
+    put_pending(&f, "memo", b"received", false, &peer_version(1))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    // 받은 직후 내가 또 고쳤다.
+    fs::write(f.root.join("memo"), b"mine")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    let mut expected = peer_version(1);
+    expected.bump(test_device());
+    assert_eq!(stored_version(&f, "", "memo")?, expected);
+    Ok(())
+}
+
+#[test]
+fn a_pending_record_that_does_not_match_the_content_is_left_in_place() -> Result<(), Box<dyn Error>>
+{
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    // 받기로 한 내용(other)과 디스크의 내용이 달라, 받은 기록으로 볼 수 없다.
+    fs::write(f.root.join("memo"), b"edited")?;
+    put_pending(&f, "memo", b"other", false, &peer_version(1))?;
+
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    // 내 수정으로만 기록하고, 받는 중일 수 있는 기록은 소비하지 않고 남긴다.
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+    assert!(pending_left(&f, "memo")?);
+    Ok(())
+}
+
+#[test]
+fn a_delete_event_does_not_consume_a_pending_record_for_content() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    // 받는 도중 옛 파일이 지워지는 이벤트가 먼저 와도, 내용을 받는 기록은 남아야 한다.
+    fs::remove_file(f.root.join("memo"))?;
+    put_pending(&f, "memo", b"incoming", false, &peer_version(1))?;
+
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    assert!(pending_left(&f, "memo")?);
+    Ok(())
+}
+
+#[test]
+fn a_file_deleted_because_the_peer_deleted_it_keeps_the_peers_version() -> Result<(), Box<dyn Error>>
+{
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    fs::write(f.root.join("docs/by_path"), b"a")?;
+    fs::write(f.root.join("by_root"), b"b")?;
+    fs::create_dir(f.root.join("tree"))?;
+    fs::write(f.root.join("tree/inner"), b"c")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    let mut theirs = my_version(1);
+    theirs.bump(rfsync_protocol::DeviceId::from_cert(b"peer"));
+
+    put_pending(&f, "docs/by_path", b"a", true, &theirs)?;
+    fs::remove_file(f.root.join("docs/by_path"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/by_path"))?;
+    put_pending(&f, "by_root", b"b", true, &theirs)?;
+    fs::remove_file(f.root.join("by_root"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    put_pending(&f, "tree/inner", b"c", true, &theirs)?;
+    fs::remove_dir_all(f.root.join("tree"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("tree"))?;
+
+    assert_eq!(stored_version(&f, "docs", "by_path")?, theirs);
+    assert_eq!(stored_version(&f, "", "by_root")?, theirs);
+    assert_eq!(stored_version(&f, "tree", "inner")?, theirs);
+    assert!(!pending_left(&f, "docs/by_path")?);
+    assert!(!pending_left(&f, "by_root")?);
+    assert!(!pending_left(&f, "tree/inner")?);
     Ok(())
 }

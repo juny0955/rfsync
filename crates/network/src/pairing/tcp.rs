@@ -38,8 +38,11 @@ pub async fn receive_message(
     Ok(message)
 }
 
-pub async fn bind_tcp(addr: SocketAddr) -> Result<TcpStream, NetworkError> {
-    let listener = TcpListener::bind(addr).await?;
+pub async fn bind_tcp(addr: SocketAddr) -> Result<TcpListener, NetworkError> {
+    Ok(TcpListener::bind(addr).await?)
+}
+
+pub async fn accept_tcp(listener: &TcpListener) -> Result<TcpStream, NetworkError> {
     let (stream, _peer_addr) = listener.accept().await?;
     Ok(stream)
 }

@@ -1,6 +1,7 @@
 use std::{io, num::TryFromIntError, path::PathBuf, time::SystemTimeError};
 
 use rfsync_fs::error::FsError;
+use rfsync_ipc::IpcError;
 use rfsync_network::NetworkError;
 use rfsync_protocol::ProtocolError;
 use rfsync_storage::error::StorageError;
@@ -26,17 +27,11 @@ pub enum EngineError {
     #[error("등록되지 않은 root입니다: {0}")]
     RootNotFound(i64),
 
-    #[error("등록되지 않은 root path입니다: {0}")]
-    RootNotFoundByPath(PathBuf),
-
     #[error("초기 스냅샵이 없는 root입니다: {0}")]
     NotInitializedRoot(i64),
 
     #[error("이미 스냅샷이 존재합니다: {0}")]
     SnapshotAlreadyExists(i64),
-
-    #[error("페어링된 장치가 없습니다")]
-    NoPairedDevices,
 
     #[error("입출력 오류: {0}")]
     Io(#[from] io::Error),
@@ -70,4 +65,13 @@ pub enum EngineError {
 
     #[error("예상하지 못한 메시지입니다: {0}가 와야 합니다")]
     UnexpectedMessage(&'static str),
+
+    #[error("IPC 오류: {0}")]
+    Ipc(#[from] IpcError),
+
+    #[error("이미 다른 데몬이 실행 중입니다: {}", .0.display())]
+    DaemonAlreadyRunning(PathBuf),
+
+    #[error("소켓 경로에 소켓이 아닌 파일이 있습니다: {}", .0.display())]
+    NotASocket(PathBuf),
 }

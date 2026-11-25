@@ -10,5 +10,5 @@ pub use quic::*;
 
 pub use quinn::{
     ClientConfig, Connection as QuicConnection, Endpoint, RecvStream as QuicRecvStream,
-    SendStream as QuicSendStream,
+    SendStream as QuicSendStream, ServerConfig,
 };

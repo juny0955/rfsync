@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rfsync_engine::{register_root, watch_root};
+use rfsync_engine::{DeviceId, register_root, watch_root};
 
 struct TestDir(PathBuf);
 
@@ -74,7 +74,7 @@ fn watcher_child() -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
     let root_id = std::env::var("RFSYNC_TEST_WATCH_ROOT_ID")?.parse()?;
-    watch_root(root_id, Path::new(&db))?;
+    watch_root(root_id, Path::new(&db), DeviceId::from_cert(b"test"))?;
     Ok(())
 }
 
@@ -84,7 +84,7 @@ fn watcher_updates_snapshot_for_real_file_events() -> Result<(), Box<dyn Error>>
     let root = dir.0.join("root");
     let db = dir.0.join("snapshot.db");
     fs::create_dir(&root)?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, rfsync_engine::DeviceId::from_cert(b"test"))?;
 
     let mut watcher = WatcherProcess::start(&db, root_id)?;
     let conn = rfsync_storage::open(&db)?;
@@ -144,7 +144,7 @@ fn watcher_reconciles_changes_made_before_start() -> Result<(), Box<dyn Error>> 
     fs::create_dir(&root)?;
     fs::write(root.join("modified"), b"old")?;
     fs::write(root.join("deleted"), b"old")?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, rfsync_engine::DeviceId::from_cert(b"test"))?;
     fs::write(root.join("added"), b"added")?;
     fs::write(root.join("modified"), b"changed")?;
     fs::remove_file(root.join("deleted"))?;
@@ -181,7 +181,7 @@ fn watcher_returns_initial_sync_error_and_preserves_snapshot() -> Result<(), Box
     let db = dir.0.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("original"), b"old")?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, rfsync_engine::DeviceId::from_cert(b"test"))?;
     fs::remove_file(root.join("original"))?;
     fs::write(root.join("invalid\\name"), b"new")?;
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ProtocolError;
+use crate::{ProtocolError, VersionVector};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -15,6 +15,8 @@ pub struct Entry {
     /// 삭제된 파일이다(삭제 기록). 이때 `size`·`hash`는 지우기 직전 내용의 값이다.
     /// 필드는 순서대로 직렬화되므로 새 필드는 항상 맨 뒤에 추가한다.
     pub deleted: bool,
+    /// 파일의 장치별 수정 이력. 두 장치가 같은 경로를 서로 다르게 가졌을 때 동시 수정인지 가리는 데 쓴다.
+    pub version: VersionVector,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -74,6 +76,7 @@ mod tests {
                     modified_secs: 1_700_000_000,
                     modified_nanos: 500,
                     deleted: false,
+                    version: VersionVector::default(),
                 },
                 Entry {
                     path: "docs/b.txt".to_string(),
@@ -82,6 +85,7 @@ mod tests {
                     modified_secs: 1_700_000_000,
                     modified_nanos: 500,
                     deleted: false,
+                    version: VersionVector::default(),
                 },
             ],
         };
@@ -99,9 +103,33 @@ mod tests {
                 modified_secs: 1_700_000_000,
                 modified_nanos: 0,
                 deleted: true,
+                version: VersionVector::default(),
             }],
         };
         let decoded = decode(&encode(&msg).unwrap()).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn 버전_벡터가_있는_항목도_바이트로_바꿨다_되돌리면_같다() {
+        let mut version = VersionVector::default();
+        version.bump(crate::DeviceId::from_cert(b"device-a"));
+        version.bump(crate::DeviceId::from_cert(b"device-a"));
+        version.bump(crate::DeviceId::from_cert(b"device-b"));
+        let msg = Message::IndexUpdate {
+            entries: vec![Entry {
+                path: "a.txt".to_string(),
+                size: 1,
+                hash: [1u8; 32],
+                modified_secs: 1,
+                modified_nanos: 0,
+                deleted: false,
+                version,
+            }],
+        };
+
+        let decoded = decode(&encode(&msg).unwrap()).unwrap();
+
         assert_eq!(decoded, msg);
     }
 
@@ -135,6 +163,7 @@ mod tests {
                 modified_secs: 1_700_000_000,
                 modified_nanos: 1,
                 deleted: false,
+                version: VersionVector::default(),
             }],
         };
         let bytes = encode(&msg).unwrap();

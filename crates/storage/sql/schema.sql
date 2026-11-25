@@ -1,3 +1,11 @@
+CREATE TABLE devices (
+    id              INTEGER PRIMARY KEY,
+    cert_der        BLOB NOT NULL UNIQUE,
+    name            TEXT,
+    endpoint        TEXT,
+    paired_at       INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE roots (
     id              INTEGER PRIMARY KEY,
     local_path      TEXT NOT NULL UNIQUE,
@@ -27,14 +35,19 @@ CREATE TABLE files (
                     CHECK ( modified_nanos BETWEEN 0 AND 999999999 ),
     deleted         INTEGER NOT NULL DEFAULT 0
                     CHECK ( deleted IN (0, 1) ),
+    version         BLOB NOT NULL,
 
     UNIQUE (folder_id, name)
 ) STRICT;
 
-CREATE TABLE devices (
-    id              INTEGER PRIMARY KEY,
-    cert_der        BLOB NOT NULL UNIQUE,
-    name            TEXT,
-    endpoint        TEXT,
-    paired_at       INTEGER NOT NULL
+CREATE TABLE sync_pending (
+    root_id         INTEGER NOT NULL
+                    REFERENCES roots(id) ON DELETE CASCADE,
+    path            TEXT NOT NULL,
+    hash            TEXT NOT NULL CHECK ( length(hash) = 64 ),
+    deleted         INTEGER NOT NULL DEFAULT 0
+                    CHECK ( deleted IN (0, 1) ),
+    version         BLOB NOT NULL,
+
+    PRIMARY KEY (root_id, path)
 ) STRICT;

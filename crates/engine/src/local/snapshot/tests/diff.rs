@@ -32,7 +32,7 @@ fn reports_no_changes_after_initial_snapshot() -> Result<(), Box<dyn Error>> {
     let db = dir.join("snapshot.db");
     fs::create_dir_all(root.join("nested/empty"))?;
     fs::write(root.join("nested/file"), b"contents")?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, crate::DeviceId::from_cert(b"test"))?;
 
     let conn = rfsync_storage::open(&db)?;
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
@@ -59,7 +59,7 @@ fn reports_changes_and_removes_files_in_removed_folders() -> Result<(), Box<dyn 
     fs::write(root.join("modified"), b"old")?;
     fs::write(root.join("deleted"), b"old")?;
     fs::write(root.join("unchanged"), b"same")?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, crate::DeviceId::from_cert(b"test"))?;
     let conn = rfsync_storage::open(&db)?;
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
     let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;
@@ -118,6 +118,7 @@ fn rejects_file_with_missing_parent_folder() -> Result<(), Box<dyn Error>> {
         modified_secs: 0,
         modified_nanos: 0,
         deleted: false,
+        version: Vec::new(),
     };
     let result = calc_diff(&[], &[], &[file]);
     assert!(
@@ -133,11 +134,11 @@ fn does_not_report_already_deleted_file_as_removed_again() -> Result<(), Box<dyn
     let db = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("gone"), b"old")?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, crate::DeviceId::from_cert(b"test"))?;
     let conn = rfsync_storage::open(&db)?;
     let file = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "", "gone")?
         .ok_or("missing")?;
-    rfsync_storage::mark_file_deleted(&conn, file.id)?;
+    rfsync_storage::mark_file_deleted(&conn, file.id, &file.version)?;
     fs::remove_file(root.join("gone"))?;
 
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
@@ -161,11 +162,11 @@ fn reports_recreated_file_as_modified_even_when_contents_are_identical()
     let db = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("back"), b"same")?;
-    let root_id = register_root(&root, &db)?;
+    let root_id = register_root(&root, &db, crate::DeviceId::from_cert(b"test"))?;
     let conn = rfsync_storage::open(&db)?;
     let file = rfsync_storage::get_file_by_folder_and_name(&conn, root_id, "", "back")?
         .ok_or("missing")?;
-    rfsync_storage::mark_file_deleted(&conn, file.id)?;
+    rfsync_storage::mark_file_deleted(&conn, file.id, &file.version)?;
 
     let folders = rfsync_storage::get_folders_by_root_id(&conn, root_id)?;
     let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;

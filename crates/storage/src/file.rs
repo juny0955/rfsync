@@ -11,6 +11,7 @@ pub struct File {
     pub modified_secs: i64,
     pub modified_nanos: u32,
     pub deleted: bool,
+    pub version: Vec<u8>,
 }
 
 pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> {
@@ -23,9 +24,10 @@ pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> 
             hash,
             modified_secs,
             modified_nanos,
-            deleted
+            deleted,
+            version
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             file.folder_id,
             &file.name,
@@ -33,7 +35,8 @@ pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> 
             &file.hash,
             file.modified_secs,
             file.modified_nanos,
-            file.deleted
+            file.deleted,
+            file.version
         ],
     )?;
 
@@ -51,25 +54,15 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
                 files.hash,
                 files.modified_secs,
                 files.modified_nanos,
-                files.deleted
+                files.deleted,
+                files.version
             FROM files
             JOIN folders ON files.folder_id = folders.id
             WHERE folders.root_id = ?1
         ",
     )?;
 
-    let rows = stmt.query_map([root_id], |row| {
-        Ok(File {
-            id: row.get(0)?,
-            folder_id: row.get(1)?,
-            name: row.get(2)?,
-            size: row.get(3)?,
-            hash: row.get(4)?,
-            modified_secs: row.get(5)?,
-            modified_nanos: row.get(6)?,
-            deleted: row.get(7)?,
-        })
-    })?;
+    let rows = stmt.query_map([root_id], row_to_file)?;
 
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
@@ -84,24 +77,22 @@ pub fn get_files_in_folder_ids(
 
     let placeholders = vec!["?"; folder_ids.len()].join(", ");
     let sql = format!(
-        "SELECT id, folder_id, name, fsize, hash, modified_secs, modified_nanos, deleted
+        "SELECT 
+            id, 
+            folder_id, 
+            name, 
+            fsize, 
+            hash, 
+            modified_secs, 
+            modified_nanos, 
+            deleted, 
+            version
          FROM files
          WHERE folder_id IN ({placeholders})"
     );
 
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(folder_ids.iter()), |row| {
-        Ok(File {
-            id: row.get(0)?,
-            folder_id: row.get(1)?,
-            name: row.get(2)?,
-            size: row.get(3)?,
-            hash: row.get(4)?,
-            modified_secs: row.get(5)?,
-            modified_nanos: row.get(6)?,
-            deleted: row.get(7)?,
-        })
-    })?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(folder_ids.iter()), row_to_file)?;
 
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
@@ -123,7 +114,8 @@ pub fn get_file_by_folder_id_and_name(
                 files.hash,
                 files.modified_secs,
                 files.modified_nanos,
-                files.deleted
+                files.deleted,
+                files.version
             FROM files
             JOIN folders ON files.folder_id = folders.id
             WHERE folders.root_id = ?1
@@ -131,18 +123,7 @@ pub fn get_file_by_folder_id_and_name(
                 AND files.name = ?3
             ",
             params![root_id, folder_id, file_name],
-            |row| {
-                Ok(File {
-                    id: row.get(0)?,
-                    folder_id: row.get(1)?,
-                    name: row.get(2)?,
-                    size: row.get(3)?,
-                    hash: row.get(4)?,
-                    modified_secs: row.get(5)?,
-                    modified_nanos: row.get(6)?,
-                    deleted: row.get(7)?,
-                })
-            },
+            row_to_file,
         )
         .optional()?;
 
@@ -166,7 +147,8 @@ pub fn get_file_by_folder_and_name(
                 files.hash,
                 files.modified_secs,
                 files.modified_nanos,
-                files.deleted
+                files.deleted,
+                files.version
             FROM files
             JOIN folders ON files.folder_id = folders.id
             WHERE folders.root_id = ?1
@@ -174,18 +156,7 @@ pub fn get_file_by_folder_and_name(
                 AND files.name = ?3
             ",
             params![root_id, folder_path, file_name],
-            |row| {
-                Ok(File {
-                    id: row.get(0)?,
-                    folder_id: row.get(1)?,
-                    name: row.get(2)?,
-                    size: row.get(3)?,
-                    hash: row.get(4)?,
-                    modified_secs: row.get(5)?,
-                    modified_nanos: row.get(6)?,
-                    deleted: row.get(7)?,
-                })
-            },
+            row_to_file,
         )
         .optional()?;
 
@@ -198,8 +169,16 @@ pub fn delete_file_by_id(conn: &Connection, file_id: i64) -> Result<bool, Storag
     Ok(deleted > 0)
 }
 
-pub fn mark_file_deleted(conn: &Connection, file_id: i64) -> Result<bool, StorageError> {
-    let deleted = conn.execute("UPDATE files SET deleted = 1 WHERE id = ?1", [file_id])?;
+/// 파일을 삭제 표시하면서 버전도 함께 바꾼다. 삭제도 한 번의 변경이므로 버전이 따라가야 한다.
+pub fn mark_file_deleted(
+    conn: &Connection,
+    file_id: i64,
+    version: &[u8],
+) -> Result<bool, StorageError> {
+    let deleted = conn.execute(
+        "UPDATE files SET deleted = 1, version = ?1 WHERE id = ?2",
+        params![version, file_id],
+    )?;
 
     Ok(deleted > 0)
 }
@@ -214,8 +193,9 @@ pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> 
                 hash = ?4,
                 modified_secs = ?5,
                 modified_nanos = ?6,
-                deleted = ?7
-            WHERE id = ?8
+                deleted = ?7,
+                version = ?8
+            WHERE id = ?9
         ",
         params![
             file.folder_id,
@@ -225,11 +205,26 @@ pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> 
             file.modified_secs,
             file.modified_nanos,
             file.deleted,
+            file.version,
             file.id,
         ],
     )?;
 
     Ok(updated > 0)
+}
+
+fn row_to_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<File> {
+    Ok(File {
+        id: row.get(0)?,
+        folder_id: row.get(1)?,
+        name: row.get(2)?,
+        size: row.get(3)?,
+        hash: row.get(4)?,
+        modified_secs: row.get(5)?,
+        modified_nanos: row.get(6)?,
+        deleted: row.get(7)?,
+        version: row.get(8)?,
+    })
 }
 
 #[cfg(test)]
@@ -249,6 +244,7 @@ mod tests {
             modified_secs: 123,
             modified_nanos: 456,
             deleted: false,
+            version: Vec::new(),
         }
     }
 
@@ -290,6 +286,39 @@ mod tests {
         assert!(get_file_by_folder_and_name(&conn, root, "", "missing")?.is_none());
         assert!(get_file_by_folder_and_name(&conn, root, "missing", "memo.txt")?.is_none());
         assert!(get_file_by_folder_and_name(&conn, -1, "", "memo.txt")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn stores_and_updates_version_bytes() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let mut file = sample_file(folder_id);
+        file.version = vec![1, 2, 3];
+        file.id = insert_file(&conn, &file)?;
+        let mut other = sample_file(folder_id);
+        other.name = "other.txt".into();
+        let other_id = insert_file(&conn, &other)?;
+
+        let stored = get_file_by_folder_id_and_name(&conn, root_id, folder_id, "memo.txt")?
+            .ok_or("missing file")?;
+        assert_eq!(stored.version, vec![1, 2, 3]);
+
+        file.version = vec![9, 8];
+        assert!(update_file(&conn, file)?);
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        let updated = files
+            .iter()
+            .find(|f| f.name == "memo.txt")
+            .ok_or("missing file")?;
+        let other = files
+            .iter()
+            .find(|f| f.id == other_id)
+            .ok_or("missing other")?;
+        assert_eq!(updated.version, vec![9, 8]);
+        assert!(other.version.is_empty());
         Ok(())
     }
 
@@ -394,6 +423,38 @@ mod tests {
     }
 
     #[test]
+    fn marks_only_selected_file_as_deleted_and_updates_only_its_version()
+    -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let mut file = sample_file(folder_id);
+        file.version = vec![1];
+        let file_id = insert_file(&conn, &file)?;
+        let mut other = sample_file(folder_id);
+        other.name = "other.txt".into();
+        other.version = vec![7];
+        let other_id = insert_file(&conn, &other)?;
+
+        assert!(mark_file_deleted(&conn, file_id, &[2, 3])?);
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        let marked = files.iter().find(|f| f.id == file_id).ok_or("missing")?;
+        let untouched = files.iter().find(|f| f.id == other_id).ok_or("missing")?;
+        assert!(marked.deleted);
+        assert_eq!(marked.version, vec![2, 3]);
+        // 삭제 기록에도 지우기 직전 내용의 해시와 크기가 남는다.
+        assert_eq!(
+            (marked.hash.as_str(), marked.size),
+            ("a".repeat(64).as_str(), 42)
+        );
+        assert!(!untouched.deleted);
+        assert_eq!(untouched.version, vec![7]);
+        assert!(!mark_file_deleted(&conn, 42, &[1])?);
+        Ok(())
+    }
+
+    #[test]
     fn deletes_only_selected_file() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
@@ -408,32 +469,6 @@ mod tests {
         let files = get_files_by_root_id(&conn, root_id)?;
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].id, other_id);
-        Ok(())
-    }
-
-    #[test]
-    fn marks_only_selected_file_as_deleted_and_keeps_its_hash() -> Result<(), Box<dyn Error>> {
-        let conn = open(Path::new(":memory:"))?;
-        let root_id = insert_root(&conn, "/example")?;
-        let folder_id = insert_folder(&conn, root_id, "")?;
-        let file_id = insert_file(&conn, &sample_file(folder_id))?;
-        let mut other = sample_file(folder_id);
-        other.name = "other.txt".into();
-        let other_id = insert_file(&conn, &other)?;
-
-        assert!(mark_file_deleted(&conn, file_id)?);
-
-        let files = get_files_by_root_id(&conn, root_id)?;
-        assert_eq!(files.len(), 2);
-        let marked = files.iter().find(|f| f.id == file_id).ok_or("missing")?;
-        let untouched = files.iter().find(|f| f.id == other_id).ok_or("missing")?;
-        assert!(marked.deleted);
-        assert_eq!(
-            (marked.hash.as_str(), marked.size),
-            ("a".repeat(64).as_str(), 42)
-        );
-        assert!(!untouched.deleted);
-        assert!(!mark_file_deleted(&conn, 42)?);
         Ok(())
     }
 
@@ -574,6 +609,7 @@ mod tests {
             modified_secs: 123,
             modified_nanos: 456,
             deleted: false,
+            version: Vec::new(),
         };
         let id = insert_file(&conn, &file)?;
         file.folder_id = other_folder;
@@ -625,6 +661,7 @@ mod tests {
             modified_secs: 123,
             modified_nanos: 456,
             deleted: false,
+            version: Vec::new(),
         };
         let first_id = insert_file(&conn, &file)?;
         file.folder_id = second;
@@ -671,6 +708,7 @@ mod tests {
                 modified_secs: 123,
                 modified_nanos: 456,
                 deleted: false,
+                version: Vec::new(),
             },
         )?;
 

@@ -31,7 +31,7 @@ fn saves_files_empty_folders_and_ignores_symlinks() -> Result<(), Box<dyn Error>
     fs::write(root.join("photos/photo.txt"), b"photo")?;
     #[cfg(unix)]
     std::os::unix::fs::symlink(&root, root.join("link"))?;
-    let root_id = register_root(&root, &db_path)?;
+    let root_id = register_root(&root, &db_path, crate::DeviceId::from_cert(b"test"))?;
 
     let conn = rfsync_storage::open(&db_path)?;
     let root_info = rfsync_storage::get_root(&conn, root_id)?.ok_or("missing root")?;
@@ -81,7 +81,7 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
     let db_path = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("first"), b"first")?;
-    let root_id = register_root(&root, &db_path)?;
+    let root_id = register_root(&root, &db_path, crate::DeviceId::from_cert(b"test"))?;
     fs::write(root.join("second"), b"second")?;
 
     let error = create_initial_snapshot_for_test(root_id, &db_path)
@@ -116,7 +116,7 @@ fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn E
     let db_path = dir.join("snapshot.db");
     fs::create_dir(&root)?;
     fs::write(root.join("invalid\\name"), b"test")?;
-    let result = register_root(&root, &db_path);
+    let result = register_root(&root, &db_path, crate::DeviceId::from_cert(b"test"));
 
     assert!(
         matches!(result, Err(EngineError::InvalidEntryPath(path)) if path == std::path::Path::new("invalid\\name"))
@@ -133,6 +133,33 @@ fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn E
     )?;
     assert_eq!(folders, 0);
     drop(conn);
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn initial_snapshot_files_start_with_my_counter_at_one() -> Result<(), Box<dyn Error>> {
+    let dir = test_dir()?;
+    let root = dir.join("root");
+    let db_path = dir.join("snapshot.db");
+    fs::create_dir_all(root.join("sub"))?;
+    fs::write(root.join("a.txt"), b"a")?;
+    fs::write(root.join("sub/b.txt"), b"b")?;
+    let me = crate::DeviceId::from_cert(b"me");
+    let root_id = register_root(&root, &db_path, me)?;
+
+    let conn = rfsync_storage::open(&db_path)?;
+    let files = rfsync_storage::get_files_by_root_id(&conn, root_id)?;
+
+    assert_eq!(files.len(), 2);
+    let mut expected = rfsync_protocol::VersionVector::default();
+    expected.bump(me);
+    for file in files {
+        assert_eq!(
+            rfsync_protocol::VersionVector::from_bytes(&file.version)?,
+            expected
+        );
+    }
     fs::remove_dir_all(dir)?;
     Ok(())
 }

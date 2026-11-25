@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 
+use rfsync_protocol::DeviceId;
+
 use super::snapshot::create_initial_snapshot;
 use crate::error::EngineError;
 
-pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
+/// 폴더를 루트로 등록하고 초기 스냅샷을 만든다. 스냅샷의 파일은 내가 처음 본 것이므로 `me`의 카운터가 1이다.
+pub fn register_root(root: &Path, db_path: &Path, me: DeviceId) -> Result<i64, EngineError> {
     let mut conn = rfsync_storage::open(db_path)?;
 
     let absolute_root = root.canonicalize()?;
@@ -13,7 +16,7 @@ pub fn register_root(root: &Path, db_path: &Path) -> Result<i64, EngineError> {
 
     let root_id = rfsync_storage::insert_root(&conn, local_path)?;
 
-    create_initial_snapshot(&mut conn, root_id)?;
+    create_initial_snapshot(&mut conn, root_id, me)?;
     Ok(root_id)
 }
 

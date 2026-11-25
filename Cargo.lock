@@ -268,9 +268,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "rfsync-engine",
- "rfsync-storage",
- "tokio",
- "tracing-subscriber",
+ "rfsync-ipc",
 ]
 
 [[package]]
@@ -1220,6 +1218,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "rfsync-fs",
+ "rfsync-ipc",
  "rfsync-network",
  "rfsync-protocol",
  "rfsync-storage",
@@ -1237,6 +1236,17 @@ dependencies = [
  "blake3",
  "notify",
  "thiserror",
+]
+
+[[package]]
+name = "rfsync-ipc"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "rfsync-ipc",
+ "serde",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1258,6 +1268,7 @@ dependencies = [
 name = "rfsync-protocol"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "postcard",
  "serde",
  "thiserror",
