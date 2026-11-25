@@ -33,9 +33,6 @@ pub enum EngineError {
     #[error("이미 스냅샷이 존재합니다: {0}")]
     SnapshotAlreadyExists(i64),
 
-    #[error("페어링된 장치가 없습니다")]
-    NoPairedDevices,
-
     #[error("입출력 오류: {0}")]
     Io(#[from] io::Error),
 

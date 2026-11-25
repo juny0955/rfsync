@@ -1,11 +1,17 @@
 //! `local`과 `peer`를 잇는 coordinator.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use rfsync_protocol::Entry;
+use rfsync_protocol::{DeviceId, Entry};
 use tokio::{
     fs::File,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        watch,
+    },
     task::spawn_blocking,
 };
 use tracing::{debug, info, warn};
@@ -29,36 +35,78 @@ pub async fn run(
     db_path: &Path,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), EngineError> {
+    // CLI가 루트를 등록하거나 장치를 페어링했다는 알림. 용량 1: 쌓여 있으면 받는 쪽이 곧 최신 상태를 읽는다.
+    let (root_added, root_added_rx) = mpsc::channel(1);
+    let (devices_changed, devices_changed_rx) = mpsc::channel(1);
     // CLI 요청을 받는 소켓. 이미 데몬이 떠 있으면 여기서 바로 실패한다. 함수가 끝나면 소켓 파일을 지운다.
     #[cfg(unix)]
-    let _ipc = crate::ipc::start(&crate::socket_path(db_path), db_path)?;
+    let _ipc = crate::ipc::start(
+        &crate::socket_path(db_path),
+        crate::ipc::IpcContext {
+            db_path: db_path.to_path_buf(),
+            port,
+            cert: identity.cert.clone(),
+            root_added,
+            devices_changed,
+        },
+    )?;
+    #[cfg(not(unix))]
+    drop((root_added, devices_changed));
     let index = load_index(db_path)?;
     let root = first_root_path(db_path)?;
     let (events, receiver) = mpsc::channel(32);
     // 용량 1: 신호가 쌓여 있으면 받는 쪽이 곧 최신 상태를 읽으므로 더 쌓을 필요가 없다.
     let (local_changed, local_receiver) = mpsc::channel(1);
-    spawn_watcher(db_path, local_changed, identity.device_id())?;
+    spawn_watcher(db_path, local_changed.clone(), identity.device_id())?;
+    // 세션은 연결을 맺을 때마다 이 목록의 최신 값을 상대에게 보낸다.
+    let (index_tx, index_rx) = watch::channel(Arc::new(index.clone()));
     let coordinator = tokio::spawn(run_coordinator(
-        index.clone(),
+        index,
         root,
         db_path.to_path_buf(),
         receiver,
         local_receiver,
+        root_added_rx,
+        Wiring {
+            me: identity.device_id(),
+            index_tx,
+            local_signal: local_changed,
+        },
     ));
 
-    let result = peer::run(identity, port, db_path, index, events, shutdown).await;
+    let result = peer::run(
+        identity,
+        port,
+        db_path,
+        index_rx,
+        events,
+        devices_changed_rx,
+        shutdown,
+    )
+    .await;
 
     // 종료 중에는 남은 이벤트를 기다리지 않는다. 세션이 끝난 뒤에도 연결 작업이 송신구를 쥐고 있을 수 있다.
     coordinator.abort();
     result
 }
 
+/// coordinator가 바깥과 주고받는 연결부.
+struct Wiring {
+    me: DeviceId,
+    /// 바뀐 내 파일 목록을 세션에 알린다.
+    index_tx: watch::Sender<Arc<Vec<Entry>>>,
+    /// 감시를 새로 띄울 때 넘겨 줄 "내 폴더가 바뀌었다" 신호의 송신구.
+    local_signal: Sender<()>,
+}
+
 async fn run_coordinator(
     mut index: Vec<Entry>,
-    root: Option<PathBuf>,
+    mut root: Option<PathBuf>,
     db_path: PathBuf,
     mut events: Receiver<PeerEvent>,
     mut local_changed: Receiver<()>,
+    mut root_added: Receiver<()>,
+    wiring: Wiring,
 ) {
     // 연결된 상대들. 내 폴더가 바뀌면 이들에게 알린다.
     let mut peers: Vec<PeerHandle> = Vec::new();
@@ -92,14 +140,41 @@ async fn run_coordinator(
             }
             // 감시가 끝나 송신구가 닫히면 이 분기만 꺼지고 나머지는 계속 돈다.
             Some(()) = local_changed.recv() => {
-                on_local_changed(&mut index, &mut peers, &db_path).await;
+                on_local_changed(&mut index, &mut peers, &db_path, &wiring.index_tx).await;
+            }
+            // 데몬이 도는 중에 루트가 등록되었다.
+            // 임시: 루트가 하나뿐이라고 가정해, 처음 생긴 루트만 감시하고 이후에 추가된 루트는 다음 시작 때 반영한다.
+            Some(()) = root_added.recv() => {
+                if root.is_some() {
+                    warn!("이미 루트가 있어 새 루트는 데몬을 다시 시작해야 반영됩니다");
+                    continue;
+                }
+                match first_root_path(&db_path) {
+                    Ok(Some(path)) => {
+                        match spawn_watcher(&db_path, wiring.local_signal.clone(), wiring.me) {
+                            Ok(()) => {
+                                info!("새 루트를 감시합니다: {}", path.display());
+                                root = Some(path);
+                                on_local_changed(&mut index, &mut peers, &db_path, &wiring.index_tx).await;
+                            }
+                            Err(e) => warn!("새 루트의 감시를 시작하지 못했습니다: {e}"),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => warn!("새 루트를 읽지 못했습니다: {e}"),
+                }
             }
         }
     }
 }
 
 /// 내 폴더가 바뀌었다. DB에서 목록을 다시 읽어 직전 목록과 비교하고, 바뀐 항목을 연결된 상대 모두에게 보낸다.
-async fn on_local_changed(index: &mut Vec<Entry>, peers: &mut Vec<PeerHandle>, db_path: &Path) {
+async fn on_local_changed(
+    index: &mut Vec<Entry>,
+    peers: &mut Vec<PeerHandle>,
+    db_path: &Path,
+    index_tx: &watch::Sender<Arc<Vec<Entry>>>,
+) {
     let db_path = db_path.to_path_buf();
     let new_index = match spawn_blocking(move || load_index(&db_path)).await {
         Ok(Ok(new_index)) => new_index,
@@ -109,6 +184,7 @@ async fn on_local_changed(index: &mut Vec<Entry>, peers: &mut Vec<PeerHandle>, d
 
     let changed = changed_entries(index, &new_index);
     *index = new_index;
+    index_tx.send_replace(Arc::new(index.clone()));
     if changed.is_empty() {
         return;
     }
@@ -312,12 +388,20 @@ mod tests {
     async fn request(root: Option<PathBuf>, path: &str) -> Option<FileOffer> {
         let (events, receiver) = mpsc::channel(8);
         let (_local_changed, local_receiver) = mpsc::channel(1);
+        let (_root_added, root_added_rx) = mpsc::channel(1);
+        let (index_tx, _index_rx) = watch::channel(Arc::new(Vec::new()));
         tokio::spawn(run_coordinator(
             Vec::new(),
             root,
             PathBuf::new(),
             receiver,
             local_receiver,
+            root_added_rx,
+            Wiring {
+                me: DeviceId::from_cert(b"test"),
+                index_tx,
+                local_signal: _local_changed,
+            },
         ));
 
         let (reply, answer) = tokio::sync::oneshot::channel();

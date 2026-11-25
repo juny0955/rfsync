@@ -200,3 +200,29 @@ fn 소켓이_없으면_클라이언트는_io_에러를_돌려준다() {
         Err(crate::IpcError::Io(_))
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn 스트리밍_요청은_마지막_응답_앞의_응답을_하나씩_넘긴다() {
+    let dir = std::env::temp_dir().join(format!("rfsync-ipc-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("test.sock");
+    let _ = std::fs::remove_file(&socket);
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _: Request = read_frame(&mut stream).unwrap();
+        write_frame(&mut stream, &Response::PairingCode("1-abc".into())).unwrap();
+        write_frame(&mut stream, &Response::Ok).unwrap();
+    });
+
+    let mut progress = Vec::new();
+    let last =
+        crate::request_streaming(&socket, &Request::PairListen, |r| progress.push(r.clone()))
+            .unwrap();
+
+    server.join().unwrap();
+    assert_eq!(progress, [Response::PairingCode("1-abc".into())]);
+    assert_eq!(last, Response::Ok);
+    std::fs::remove_dir_all(dir).unwrap();
+}

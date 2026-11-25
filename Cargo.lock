@@ -269,8 +269,6 @@ dependencies = [
  "clap",
  "rfsync-engine",
  "rfsync-ipc",
- "tokio",
- "tracing-subscriber",
 ]
 
 [[package]]

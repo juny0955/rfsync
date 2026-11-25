@@ -10,7 +10,7 @@ use rfsync_network::{Endpoint, QuicConnection, generate_certificate, open_stream
 use rfsync_protocol::VersionVector;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::{sleep, timeout},
 };
 
@@ -83,13 +83,26 @@ impl Fixture {
         events: mpsc::Sender<PeerEvent>,
         shutdown: impl Future<Output = ()>,
     ) -> Result<(), EngineError> {
+        let (_devices, devices_rx) = mpsc::channel(1);
+        self.run_full(events, devices_rx, shutdown).await
+    }
+
+    /// `run_with`에 더해, 페어링된 장치가 바뀌었다는 알림을 받는 수신구도 주어진 것을 쓴다.
+    async fn run_full(
+        &self,
+        events: mpsc::Sender<PeerEvent>,
+        devices_rx: mpsc::Receiver<()>,
+        shutdown: impl Future<Output = ()>,
+    ) -> Result<(), EngineError> {
         let index = load_index(&self.db_path)?;
+        let (_index, index_rx) = watch::channel(Arc::new(index));
         run(
             &self.daemon,
             self.port,
             &self.db_path,
-            index,
+            index_rx,
             events,
+            devices_rx,
             shutdown,
         )
         .await
@@ -247,12 +260,74 @@ async fn retries_after_a_failed_attempt() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test]
-async fn fails_when_no_device_is_paired() -> Result<(), Box<dyn Error>> {
+async fn starts_without_paired_devices_and_stops_on_shutdown() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
 
-    let result = fixture.run(std::future::pending()).await;
+    let result = timeout(TIMEOUT, fixture.run(async {})).await?;
 
-    assert!(matches!(result, Err(EngineError::NoPairedDevices)));
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn rejects_an_unpaired_peer_when_no_device_is_paired() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let (stop, stopped) = oneshot::channel::<()>();
+
+    let scenario = async {
+        if let Ok((_endpoint, conn)) = fixture.connect(&fixture.peer).await {
+            timeout(TIMEOUT, conn.closed()).await?;
+        }
+        let _ = stop.send(());
+        Ok::<(), Box<dyn Error>>(())
+    };
+    let (daemon, scenario) = timeout(TIMEOUT, async {
+        tokio::join!(
+            fixture.run(async {
+                let _ = stopped.await;
+            }),
+            scenario
+        )
+    })
+    .await?;
+
+    daemon?;
+    scenario?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn accepts_a_peer_paired_after_start_once_notified() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let (stop, stopped) = oneshot::channel::<()>();
+    let (devices, devices_rx) = mpsc::channel(1);
+    let (events, _rx) = mpsc::channel(8);
+
+    let scenario = async {
+        // 시작할 때는 아무도 페어링되어 있지 않다. 나중에 저장하고 알리면 받아들인다.
+        sleep(Duration::from_millis(200)).await;
+        fixture.pair_peer()?;
+        devices.send(()).await?;
+        sleep(Duration::from_millis(200)).await;
+
+        let (_endpoint, conn) = fixture.connect(&fixture.peer).await?;
+        sleep(Duration::from_millis(300)).await;
+        assert!(conn.close_reason().is_none());
+        let _ = stop.send(());
+        Ok::<(), Box<dyn Error>>(())
+    };
+    let (daemon, scenario) = timeout(TIMEOUT, async {
+        tokio::join!(
+            fixture.run_full(events, devices_rx, async {
+                let _ = stopped.await;
+            }),
+            scenario
+        )
+    })
+    .await?;
+
+    daemon?;
+    scenario?;
     Ok(())
 }
 

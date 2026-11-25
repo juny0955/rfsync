@@ -11,5 +11,3 @@ path = "src/main.rs"
 rfsync-engine = { path = "../../crates/engine" }
 rfsync-ipc = { path = "../../crates/ipc" }
 clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt"] }
-tracing-subscriber.workspace = true
