@@ -201,6 +201,38 @@ async fn each_node_receives_the_files_it_is_missing_from_the_other() -> Result<(
     Ok(())
 }
 
+/// 6단계의 출발점. 연결된 뒤에 생긴 파일이 상대에게 전달되는지 확인한다.
+/// 지금은 시작 시점의 목록만 보내므로 실패하는 것이 정상이다.
+#[tokio::test]
+async fn a_file_created_after_connecting_reaches_the_other_node() -> Result<(), Box<dyn Error>> {
+    let a = Node::new(&[("first.txt", b"first")])?;
+    let b = Node::new(&[])?;
+    pair(&b, &a)?;
+
+    with_nodes(&a, &b, || async {
+        // 연결 직후의 첫 동기화가 끝난 것을 확인한다.
+        wait_until("b가 first.txt를 받는다", || {
+            b.files().contains_key("first.txt")
+        })
+        .await;
+
+        // 연결된 뒤에 a의 폴더에 새 파일을 만든다.
+        fs::write(a.root.join("later.txt"), b"later").unwrap();
+
+        wait_until("b가 연결 뒤에 생긴 later.txt를 받는다", || {
+            b.files().contains_key("later.txt")
+        })
+        .await;
+    })
+    .await?;
+
+    assert_eq!(
+        b.files(),
+        expected(&[("first.txt", b"first"), ("later.txt", b"later")])
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn files_with_different_content_on_both_sides_are_left_untouched()
 -> Result<(), Box<dyn Error>> {
