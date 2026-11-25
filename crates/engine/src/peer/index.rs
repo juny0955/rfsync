@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rfsync_protocol::Entry;
+use rfsync_protocol::{Entry, VersionVector};
 use rfsync_storage::DbConnection;
 
 use crate::error::EngineError;
@@ -36,6 +36,8 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
             modified_secs: file.modified_secs,
             modified_nanos: file.modified_nanos,
             deleted: file.deleted,
+            // 저장소에 버전 컬럼이 생기기 전까지는 빈 벡터를 보낸다.
+            version: VersionVector::default(),
             path,
         });
     }

@@ -7,6 +7,7 @@ use std::{
 };
 
 use rfsync_network::{Endpoint, QuicConnection, generate_certificate, open_stream};
+use rfsync_protocol::VersionVector;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -361,6 +362,7 @@ fn entry(path: &str) -> Entry {
         modified_secs: 1,
         modified_nanos: 2,
         deleted: false,
+        version: VersionVector::default(),
     }
 }
 

@@ -278,6 +278,8 @@ fn on_index_received(mine: &[Entry], theirs: &[Entry]) -> IndexComparison {
 
 #[cfg(test)]
 mod tests {
+    use rfsync_protocol::VersionVector;
+
     use super::*;
 
     fn entry(path: &str, hash: u8) -> Entry {
@@ -288,6 +290,7 @@ mod tests {
             modified_secs: 100,
             modified_nanos: 0,
             deleted: false,
+            version: VersionVector::default(),
         }
     }
 
