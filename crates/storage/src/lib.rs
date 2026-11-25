@@ -138,7 +138,7 @@ mod tests {
 
         assert!(matches!(
             initialize_schema(&mut conn),
-            Err(StorageError::UnsupportedSchemaVersion(3))
+            Err(StorageError::UnsupportedSchemaVersion(2))
         ));
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         assert_eq!(version, 2);

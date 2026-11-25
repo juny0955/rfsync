@@ -200,6 +200,7 @@ mod tests {
                     modified_secs: 0,
                     modified_nanos: 0,
                     deleted: false,
+                    version: Vec::new(),
                 },
             )?;
         }
@@ -239,6 +240,7 @@ mod tests {
                 modified_secs: 0,
                 modified_nanos: 0,
                 deleted: false,
+                version: Vec::new(),
             },
         )?;
 

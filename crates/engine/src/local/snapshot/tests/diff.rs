@@ -118,6 +118,7 @@ fn rejects_file_with_missing_parent_folder() -> Result<(), Box<dyn Error>> {
         modified_secs: 0,
         modified_nanos: 0,
         deleted: false,
+        version: Vec::new(),
     };
     let result = calc_diff(&[], &[], &[file]);
     assert!(
