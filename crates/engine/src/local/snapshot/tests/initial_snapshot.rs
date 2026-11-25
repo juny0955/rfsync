@@ -21,7 +21,7 @@ fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
 }
 
 #[test]
-fn saves_files_empty_folders_and_ignores_symlinks() -> Result<(), Box<dyn Error>> {
+fn 파일과_빈_폴더를_저장하고_심볼릭_링크는_무시한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db_path = dir.join("snapshot.db");
@@ -75,7 +75,7 @@ fn saves_files_empty_folders_and_ignores_symlinks() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>> {
+fn 두_번째_스냅샷은_거부하고_원본을_보존한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db_path = dir.join("snapshot.db");
@@ -100,7 +100,7 @@ fn rejects_second_snapshot_and_preserves_original() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn rejects_snapshot_for_missing_root() -> Result<(), Box<dyn Error>> {
+fn 없는_루트의_스냅샷은_거부한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let result = create_initial_snapshot_for_test(42, &dir.join("snapshot.db"));
     assert!(matches!(result, Err(EngineError::RootNotFound(42))));
@@ -110,7 +110,7 @@ fn rejects_snapshot_for_missing_root() -> Result<(), Box<dyn Error>> {
 
 #[cfg(unix)]
 #[test]
-fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn Error>> {
+fn 경로를_표현할_수_없으면_스냅샷을_롤백한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db_path = dir.join("snapshot.db");
@@ -138,7 +138,7 @@ fn rolls_back_snapshot_when_path_cannot_be_represented() -> Result<(), Box<dyn E
 }
 
 #[test]
-fn initial_snapshot_files_start_with_my_counter_at_one() -> Result<(), Box<dyn Error>> {
+fn 초기_스냅샷의_파일은_내_카운터_1로_시작한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db_path = dir.join("snapshot.db");

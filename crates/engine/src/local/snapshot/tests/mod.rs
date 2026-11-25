@@ -36,7 +36,7 @@ fn sync_path_for_test(root_id: i64, db_path: &Path, target: &Path) -> Result<(),
 }
 
 #[test]
-fn rejects_invalid_entry_paths() {
+fn 잘못된_엔트리_경로는_거부한다() {
     for path in ["", "..", "invalid\\name"] {
         assert!(
             matches!(portable_path(Path::new(path)), Err(EngineError::InvalidEntryPath(p)) if p == Path::new(path))

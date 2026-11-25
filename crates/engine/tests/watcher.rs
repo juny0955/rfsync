@@ -41,7 +41,7 @@ impl WatcherProcess {
     fn start(db: &Path, root_id: i64) -> Result<Self, Box<dyn Error>> {
         Ok(Self(
             Command::new(std::env::current_exe()?)
-                .args(["--exact", "watcher_child", "--nocapture"])
+                .args(["--exact", "감시기_자식_프로세스", "--nocapture"])
                 .env("RFSYNC_TEST_WATCH_DB", db)
                 .env("RFSYNC_TEST_WATCH_ROOT_ID", root_id.to_string())
                 .stdout(Stdio::null())
@@ -69,7 +69,7 @@ impl Drop for WatcherProcess {
 }
 
 #[test]
-fn watcher_child() -> Result<(), Box<dyn Error>> {
+fn 감시기_자식_프로세스() -> Result<(), Box<dyn Error>> {
     let Some(db) = std::env::var_os("RFSYNC_TEST_WATCH_DB") else {
         return Ok(());
     };
@@ -79,7 +79,7 @@ fn watcher_child() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn watcher_updates_snapshot_for_real_file_events() -> Result<(), Box<dyn Error>> {
+fn 감시기는_실제_파일_이벤트로_스냅샷을_갱신한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("snapshot.db");
@@ -137,7 +137,7 @@ fn watcher_updates_snapshot_for_real_file_events() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn watcher_reconciles_changes_made_before_start() -> Result<(), Box<dyn Error>> {
+fn 감시기는_시작_전에_발생한_변경을_맞춰_반영한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("snapshot.db");
@@ -175,7 +175,7 @@ fn watcher_reconciles_changes_made_before_start() -> Result<(), Box<dyn Error>> 
 
 #[cfg(unix)]
 #[test]
-fn watcher_returns_initial_sync_error_and_preserves_snapshot() -> Result<(), Box<dyn Error>> {
+fn 감시기는_초기_동기화_에러를_반환하고_스냅샷을_보존한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("snapshot.db");

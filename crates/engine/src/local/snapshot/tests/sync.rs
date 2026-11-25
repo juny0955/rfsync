@@ -88,7 +88,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn sync_root_applies_changes_and_preserves_unchanged_files() -> Result<(), Box<dyn Error>> {
+fn sync_root는_변경을_반영하고_바뀌지_않은_파일은_보존한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::create_dir_all(f.root.join("removed/nested"))?;
     fs::write(f.root.join("removed/nested/old"), b"old")?;
@@ -124,7 +124,7 @@ fn sync_root_applies_changes_and_preserves_unchanged_files() -> Result<(), Box<d
 }
 
 #[test]
-fn sync_path_updates_only_selected_folder_tree() -> Result<(), Box<dyn Error>> {
+fn sync_path는_선택한_폴더_트리만_갱신한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::create_dir_all(f.root.join("docs/old"))?;
     fs::create_dir(f.root.join("docs-old"))?;
@@ -161,7 +161,7 @@ fn sync_path_updates_only_selected_folder_tree() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn sync_path_handles_file_creation_modification_and_deletion() -> Result<(), Box<dyn Error>> {
+fn sync_path는_파일_생성_수정_삭제를_처리한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
     let target = Path::new("file");
@@ -187,7 +187,7 @@ fn sync_path_handles_file_creation_modification_and_deletion() -> Result<(), Box
 }
 
 #[test]
-fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(), Box<dyn Error>> {
+fn sync_path는_파일과_폴더_전환_및_폴더_삭제를_처리한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     let target = Path::new("item");
     fs::write(f.root.join(target), b"old")?;
@@ -228,7 +228,7 @@ fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(),
 
 #[cfg(unix)]
 #[test]
-fn sync_path_rolls_back_when_subtree_has_invalid_path() -> Result<(), Box<dyn Error>> {
+fn sync_path는_하위_트리에_잘못된_경로가_있으면_롤백한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("item"), b"original")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -247,7 +247,7 @@ fn sync_path_rolls_back_when_subtree_has_invalid_path() -> Result<(), Box<dyn Er
 
 #[cfg(unix)]
 #[test]
-fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error>> {
+fn sync_root는_추가된_경로가_잘못되면_롤백한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("original"), b"original")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -264,7 +264,7 @@ fn sync_root_rolls_back_when_added_path_is_invalid() -> Result<(), Box<dyn Error
 }
 
 #[test]
-fn synchronization_rejects_uninitialized_root() -> Result<(), Box<dyn Error>> {
+fn 초기화되지_않은_루트의_동기화는_거부한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     assert!(
         matches!(watch_root(f.root_id, &f.db, super::test_device()), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
@@ -273,7 +273,7 @@ fn synchronization_rejects_uninitialized_root() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn deleting_a_file_keeps_a_tombstone_and_recreating_it_revives_the_same_row()
+fn 파일을_삭제하면_톰스톤을_남기고_다시_만들면_같은_행을_되살린다()
 -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"hello")?;
@@ -302,7 +302,7 @@ fn deleting_a_file_keeps_a_tombstone_and_recreating_it_revives_the_same_row()
 }
 
 #[test]
-fn deleting_a_folder_keeps_tombstones_of_files_inside() -> Result<(), Box<dyn Error>> {
+fn 폴더를_삭제하면_안의_파일_톰스톤을_남긴다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::create_dir_all(f.root.join("docs/nested"))?;
     fs::write(f.root.join("docs/a"), b"a")?;
@@ -348,7 +348,7 @@ fn stored_version(f: &Fixture, folder: &str, name: &str) -> Result<VersionVector
 }
 
 #[test]
-fn sync_root_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
+fn sync_root는_새_파일에_내_첫_버전을_부여한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
     fs::write(f.root.join("new"), b"hello")?;
@@ -360,7 +360,7 @@ fn sync_root_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn sync_path_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
+fn sync_path는_새_파일에_내_첫_버전을_부여한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::create_dir(f.root.join("docs"))?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -373,7 +373,7 @@ fn sync_path_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn sync_root_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Error>> {
+fn sync_root는_내용이_바뀌면_내_카운터를_올린다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -389,7 +389,7 @@ fn sync_root_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn sync_path_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Error>> {
+fn sync_path는_내용이_바뀌면_내_카운터를_올린다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -405,7 +405,7 @@ fn sync_path_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn changing_only_the_modified_time_keeps_the_version() -> Result<(), Box<dyn Error>> {
+fn 수정_시각만_바뀌면_버전을_유지한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -442,7 +442,7 @@ fn changing_only_the_modified_time_keeps_the_version() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn recreating_a_deleted_file_moves_its_version_ahead() -> Result<(), Box<dyn Error>> {
+fn 삭제된_파일을_다시_만들면_버전이_앞으로_나아간다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -462,7 +462,7 @@ fn recreating_a_deleted_file_moves_its_version_ahead() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn deleting_a_file_raises_my_counter_in_sync_path_and_sync_root() -> Result<(), Box<dyn Error>> {
+fn 파일을_삭제하면_sync_path와_sync_root_모두_내_카운터를_올린다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("by_path"), b"a")?;
     fs::write(f.root.join("by_root"), b"b")?;
@@ -483,7 +483,7 @@ fn deleting_a_file_raises_my_counter_in_sync_path_and_sync_root() -> Result<(), 
 }
 
 #[test]
-fn deleting_a_folder_raises_the_counter_of_every_file_inside() -> Result<(), Box<dyn Error>> {
+fn 폴더를_삭제하면_안의_모든_파일의_카운터를_올린다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::create_dir_all(f.root.join("docs/nested"))?;
     fs::write(f.root.join("docs/a"), b"a")?;
@@ -502,7 +502,7 @@ fn deleting_a_folder_raises_the_counter_of_every_file_inside() -> Result<(), Box
 }
 
 #[test]
-fn an_already_deleted_file_keeps_its_version_on_later_events() -> Result<(), Box<dyn Error>> {
+fn 이미_삭제된_파일은_이후_이벤트에서도_버전을_유지한다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::create_dir(f.root.join("docs"))?;
     fs::write(f.root.join("docs/a"), b"a")?;
@@ -522,7 +522,7 @@ fn an_already_deleted_file_keeps_its_version_on_later_events() -> Result<(), Box
 }
 
 #[test]
-fn replacing_a_file_with_a_folder_raises_the_old_files_counter() -> Result<(), Box<dyn Error>> {
+fn 파일을_폴더로_바꾸면_이전_파일의_카운터를_올린다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("item"), b"file")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -571,7 +571,7 @@ fn peer_version(times: u32) -> VersionVector {
 }
 
 #[test]
-fn a_received_file_keeps_the_peers_version_in_sync_path_and_sync_root() -> Result<(), Box<dyn Error>>
+fn 받은_파일은_sync_path와_sync_root_모두_피어의_버전을_유지한다() -> Result<(), Box<dyn Error>>
 {
     let f = Fixture::new()?;
     fs::create_dir(f.root.join("docs"))?;
@@ -596,7 +596,7 @@ fn a_received_file_keeps_the_peers_version_in_sync_path_and_sync_root() -> Resul
 }
 
 #[test]
-fn editing_a_received_file_again_merges_the_peers_history_and_raises_mine()
+fn 받은_파일을_다시_수정하면_피어의_이력을_합치고_내_카운터를_올린다()
 -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -615,7 +615,7 @@ fn editing_a_received_file_again_merges_the_peers_history_and_raises_mine()
 }
 
 #[test]
-fn a_pending_record_that_does_not_match_the_content_is_left_in_place() -> Result<(), Box<dyn Error>>
+fn 내용과_맞지_않는_대기_기록은_그대로_둔다() -> Result<(), Box<dyn Error>>
 {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
@@ -633,7 +633,7 @@ fn a_pending_record_that_does_not_match_the_content_is_left_in_place() -> Result
 }
 
 #[test]
-fn a_delete_event_does_not_consume_a_pending_record_for_content() -> Result<(), Box<dyn Error>> {
+fn 삭제_이벤트는_내용_대기_기록을_소비하지_않는다() -> Result<(), Box<dyn Error>> {
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -648,7 +648,7 @@ fn a_delete_event_does_not_consume_a_pending_record_for_content() -> Result<(), 
 }
 
 #[test]
-fn a_file_deleted_because_the_peer_deleted_it_keeps_the_peers_version() -> Result<(), Box<dyn Error>>
+fn 피어가_삭제해서_지워진_파일은_피어의_버전을_유지한다() -> Result<(), Box<dyn Error>>
 {
     let f = Fixture::new()?;
     fs::create_dir(f.root.join("docs"))?;

@@ -77,7 +77,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips_der_and_preserves_existing_identity() -> io::Result<()> {
+    fn DER을_왕복하고_기존_신원을_보존한다() -> io::Result<()> {
         let root = tempfile::tempdir()?;
         let dir = root.path().join("iden");
         assert!(load_from(&dir)?.is_none());
@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_error_when_private_key_is_missing() -> io::Result<()> {
+    fn 개인_키가_없으면_에러를_보고한다() -> io::Result<()> {
         let root = tempfile::tempdir()?;
         let dir = root.path().join("iden");
         fs::create_dir(&dir)?;
@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_saves_publish_only_one_identity() -> io::Result<()> {
+    fn 동시에_저장해도_신원은_하나만_공개된다() -> io::Result<()> {
         let root = tempfile::tempdir()?;
         let dir = root.path().join("iden");
         let start = std::sync::Barrier::new(2);

@@ -34,7 +34,7 @@ impl Drop for TestDir {
 }
 
 #[test]
-fn sync_path_converts_nested_file_to_folder() -> Result<(), Box<dyn Error>> {
+fn sync_path는_중첩된_파일을_폴더로_바꾼다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("db");
@@ -58,7 +58,7 @@ fn sync_path_converts_nested_file_to_folder() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn deleting_nested_folder_preserves_similar_sibling() -> Result<(), Box<dyn Error>> {
+fn 중첩된_폴더를_삭제해도_이름이_비슷한_형제는_보존한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("db");
@@ -89,7 +89,7 @@ fn deleting_nested_folder_preserves_similar_sibling() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn sync_path_does_not_modify_other_root() -> Result<(), Box<dyn Error>> {
+fn sync_path는_다른_루트를_수정하지_않는다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let first = dir.0.join("first");
     let second = dir.0.join("second");
@@ -116,7 +116,7 @@ fn sync_path_does_not_modify_other_root() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn repeated_folder_and_deleted_path_syncs_preserve_snapshot() -> Result<(), Box<dyn Error>> {
+fn 폴더와_삭제된_경로를_반복_동기화해도_스냅샷을_보존한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("db");
@@ -144,7 +144,7 @@ fn repeated_folder_and_deleted_path_syncs_preserve_snapshot() -> Result<(), Box<
 }
 
 #[test]
-fn missing_parent_folder_returns_error_without_changing_snapshot() -> Result<(), Box<dyn Error>> {
+fn 부모_폴더가_없으면_스냅샷을_바꾸지_않고_에러를_반환한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("db");
@@ -163,7 +163,7 @@ fn missing_parent_folder_returns_error_without_changing_snapshot() -> Result<(),
 }
 
 #[test]
-fn sync_path_saves_scanned_file_metadata() -> Result<(), Box<dyn Error>> {
+fn sync_path는_스캔한_파일_메타데이터를_저장한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("db");
@@ -195,7 +195,7 @@ fn sync_path_saves_scanned_file_metadata() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn sync_rejects_missing_root_and_invalid_paths() -> Result<(), Box<dyn Error>> {
+fn 동기화는_없는_루트와_잘못된_경로를_거부한다() -> Result<(), Box<dyn Error>> {
     let dir = TestDir::new()?;
     let root = dir.0.join("root");
     let db = dir.0.join("db");

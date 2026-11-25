@@ -26,7 +26,7 @@ fn test_dir() -> Result<PathBuf, Box<dyn Error>> {
 }
 
 #[test]
-fn reports_no_changes_after_initial_snapshot() -> Result<(), Box<dyn Error>> {
+fn 초기_스냅샷_직후에는_변경이_없다고_보고한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db = dir.join("snapshot.db");
@@ -50,7 +50,7 @@ fn reports_no_changes_after_initial_snapshot() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn reports_changes_and_removes_files_in_removed_folders() -> Result<(), Box<dyn Error>> {
+fn 변경을_보고하고_삭제된_폴더_안의_파일은_제거한다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db = dir.join("snapshot.db");
@@ -108,7 +108,7 @@ fn reports_changes_and_removes_files_in_removed_folders() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn rejects_file_with_missing_parent_folder() -> Result<(), Box<dyn Error>> {
+fn 부모_폴더가_없는_파일은_거부한다() -> Result<(), Box<dyn Error>> {
     let file = rfsync_storage::File {
         id: 1,
         folder_id: 42,
@@ -128,7 +128,7 @@ fn rejects_file_with_missing_parent_folder() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn does_not_report_already_deleted_file_as_removed_again() -> Result<(), Box<dyn Error>> {
+fn 이미_삭제된_파일을_다시_삭제됐다고_보고하지_않는다() -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");
     let db = dir.join("snapshot.db");
@@ -155,7 +155,7 @@ fn does_not_report_already_deleted_file_as_removed_again() -> Result<(), Box<dyn
 }
 
 #[test]
-fn reports_recreated_file_as_modified_even_when_contents_are_identical()
+fn 다시_만든_파일은_내용이_같아도_수정됐다고_보고한다()
 -> Result<(), Box<dyn Error>> {
     let dir = test_dir()?;
     let root = dir.join("root");

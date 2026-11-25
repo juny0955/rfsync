@@ -191,7 +191,7 @@ async fn accept_from_daemon(peer: &Endpoint) -> Result<QuicConnection, Box<dyn E
 }
 
 #[tokio::test]
-async fn dials_the_stored_endpoint_of_a_paired_device() -> Result<(), Box<dyn Error>> {
+async fn 페어링된_기기의_저장된_엔드포인트로_연결을_시도한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let peer = fixture.bind_peer(&fixture.peer)?;
     fixture.pair_peer_at(peer.local_addr()?)?;
@@ -208,7 +208,7 @@ async fn dials_the_stored_endpoint_of_a_paired_device() -> Result<(), Box<dyn Er
 }
 
 #[tokio::test]
-async fn dials_again_after_the_connection_is_closed() -> Result<(), Box<dyn Error>> {
+async fn 연결이_닫히면_다시_연결을_시도한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let peer = fixture.bind_peer(&fixture.peer)?;
     fixture.pair_peer_at(peer.local_addr()?)?;
@@ -228,7 +228,7 @@ async fn dials_again_after_the_connection_is_closed() -> Result<(), Box<dyn Erro
 }
 
 #[tokio::test]
-async fn retries_after_a_failed_attempt() -> Result<(), Box<dyn Error>> {
+async fn 실패한_시도_뒤에_재시도한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     // 저장된 인증서와 다른 신원으로 응답하는 피어라서 첫 접속은 인증서 검증에 실패한다.
     let peer = fixture.bind_peer(&new_identity()?)?;
@@ -260,7 +260,7 @@ async fn retries_after_a_failed_attempt() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test]
-async fn starts_without_paired_devices_and_stops_on_shutdown() -> Result<(), Box<dyn Error>> {
+async fn 페어링된_기기가_없어도_시작하고_종료_시_멈춘다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
 
     let result = timeout(TIMEOUT, fixture.run(async {})).await?;
@@ -270,7 +270,7 @@ async fn starts_without_paired_devices_and_stops_on_shutdown() -> Result<(), Box
 }
 
 #[tokio::test]
-async fn rejects_an_unpaired_peer_when_no_device_is_paired() -> Result<(), Box<dyn Error>> {
+async fn 페어링된_기기가_없으면_페어링되지_않은_피어를_거부한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let (stop, stopped) = oneshot::channel::<()>();
 
@@ -297,7 +297,7 @@ async fn rejects_an_unpaired_peer_when_no_device_is_paired() -> Result<(), Box<d
 }
 
 #[tokio::test]
-async fn accepts_a_peer_paired_after_start_once_notified() -> Result<(), Box<dyn Error>> {
+async fn 시작_후_페어링된_피어는_알림을_받으면_수락한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let (stop, stopped) = oneshot::channel::<()>();
     let (devices, devices_rx) = mpsc::channel(1);
@@ -332,7 +332,7 @@ async fn accepts_a_peer_paired_after_start_once_notified() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
-async fn keeps_a_paired_peers_connection_open() -> Result<(), Box<dyn Error>> {
+async fn 페어링된_피어의_연결은_열어_둔다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (stop, stopped) = oneshot::channel::<()>();
@@ -361,7 +361,7 @@ async fn keeps_a_paired_peers_connection_open() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test]
-async fn keeps_accepting_after_rejecting_an_unpaired_peer() -> Result<(), Box<dyn Error>> {
+async fn 페어링되지_않은_피어를_거부한_뒤에도_계속_수락한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let unpaired = new_identity()?;
@@ -396,7 +396,7 @@ async fn keeps_accepting_after_rejecting_an_unpaired_peer() -> Result<(), Box<dy
 }
 
 #[tokio::test]
-async fn closes_connections_when_shut_down() -> Result<(), Box<dyn Error>> {
+async fn 종료하면_연결을_닫는다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (stop, stopped) = oneshot::channel::<()>();
@@ -477,7 +477,7 @@ fn register_root_with_files(
 }
 
 #[tokio::test]
-async fn sends_hello_then_index_to_a_peer_that_connects_to_the_daemon() -> Result<(), Box<dyn Error>>
+async fn 데몬에_연결한_피어에게_hello_다음_index를_보낸다() -> Result<(), Box<dyn Error>>
 {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
@@ -499,7 +499,7 @@ async fn sends_hello_then_index_to_a_peer_that_connects_to_the_daemon() -> Resul
 }
 
 #[tokio::test]
-async fn sends_hello_then_index_to_a_peer_the_daemon_dials() -> Result<(), Box<dyn Error>> {
+async fn 데몬이_연결한_피어에게_hello_다음_index를_보낸다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let peer = fixture.bind_peer(&fixture.peer)?;
     fixture.pair_peer_at(peer.local_addr()?)?;
@@ -521,7 +521,7 @@ async fn sends_hello_then_index_to_a_peer_the_daemon_dials() -> Result<(), Box<d
 }
 
 #[tokio::test]
-async fn sends_an_empty_index_when_no_root_is_registered() -> Result<(), Box<dyn Error>> {
+async fn 등록된_루트가_없으면_빈_index를_보낸다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
 
@@ -540,7 +540,7 @@ async fn sends_an_empty_index_when_no_root_is_registered() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
-async fn keeps_the_connection_open_after_the_handshake() -> Result<(), Box<dyn Error>> {
+async fn 핸드셰이크_후에도_연결을_열어_둔다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
 
@@ -560,7 +560,7 @@ async fn keeps_the_connection_open_after_the_handshake() -> Result<(), Box<dyn E
 }
 
 #[tokio::test]
-async fn keeps_the_connection_open_when_the_peer_sends_an_unexpected_message()
+async fn 피어가_예상치_못한_메시지를_보내도_연결을_열어_둔다()
 -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
@@ -597,7 +597,7 @@ async fn exchange_in_time(
 }
 
 #[tokio::test]
-async fn exchange_gives_each_side_the_others_index() {
+async fn 교환하면_양쪽이_상대의_index를_받는다() {
     let (mut a_to_b_write, mut a_to_b_read) = channel();
     let (mut b_to_a_write, mut b_to_a_read) = channel();
     let a_index = vec![entry("a-only.txt")];
@@ -616,7 +616,7 @@ async fn exchange_gives_each_side_the_others_index() {
 }
 
 #[tokio::test]
-async fn exchange_reports_the_peers_protocol_version_without_failing() {
+async fn 교환은_실패하지_않고_피어의_프로토콜_버전을_보고한다() {
     let (mut my_write, _peer_read) = channel();
     let (mut peer_write, mut my_read) = channel();
     write_frame(
@@ -639,7 +639,7 @@ async fn exchange_reports_the_peers_protocol_version_without_failing() {
 }
 
 #[tokio::test]
-async fn exchange_rejects_a_first_message_that_is_not_hello() {
+async fn 교환은_첫_메시지가_hello가_아니면_거부한다() {
     let (mut my_write, _peer_read) = channel();
     let (mut peer_write, mut my_read) = channel();
     write_frame(&mut peer_write, &index_message(Vec::new()))
@@ -655,7 +655,7 @@ async fn exchange_rejects_a_first_message_that_is_not_hello() {
 }
 
 #[tokio::test]
-async fn exchange_rejects_a_second_message_that_is_not_an_index() {
+async fn 교환은_두_번째_메시지가_index가_아니면_거부한다() {
     let (mut my_write, _peer_read) = channel();
     let (mut peer_write, mut my_read) = channel();
     write_frame(&mut peer_write, &hello()).await.unwrap();
@@ -670,7 +670,7 @@ async fn exchange_rejects_a_second_message_that_is_not_an_index() {
 }
 
 #[tokio::test]
-async fn exchange_fails_when_the_peer_closes_before_sending() {
+async fn 교환은_피어가_보내기_전에_닫으면_실패한다() {
     let (mut my_write, _peer_read) = channel();
     let (peer_write, mut my_read) = channel();
     drop(peer_write);
@@ -681,7 +681,7 @@ async fn exchange_fails_when_the_peer_closes_before_sending() {
 }
 
 #[tokio::test]
-async fn exchange_fails_instead_of_sending_an_index_over_the_frame_limit() {
+async fn 교환은_프레임_한도를_넘는_index를_보내지_않고_실패한다() {
     let (mut my_write, _peer_read) = channel();
     let (_peer_write, mut my_read) = channel();
     // 항목 하나가 약 120바이트라 1 MiB 상한을 넘기려면 만 개를 훌쩍 넘겨야 한다.
@@ -700,7 +700,7 @@ async fn exchange_fails_instead_of_sending_an_index_over_the_frame_limit() {
 }
 
 #[tokio::test]
-async fn starts_and_serves_when_a_root_is_registered() -> Result<(), Box<dyn Error>> {
+async fn 루트가_등록되면_시작하고_서비스한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let root_dir = tempfile::tempdir()?;
@@ -836,7 +836,7 @@ async fn request_file(
 }
 
 #[tokio::test]
-async fn answers_a_file_request_with_header_and_raw_content() -> Result<(), Box<dyn Error>> {
+async fn 파일_요청에_헤더와_원본_내용으로_응답한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let served = tempfile::tempdir()?;
@@ -864,7 +864,7 @@ async fn answers_a_file_request_with_header_and_raw_content() -> Result<(), Box<
 }
 
 #[tokio::test]
-async fn sends_content_larger_than_the_frame_limit_as_raw_bytes() -> Result<(), Box<dyn Error>> {
+async fn 프레임_한도보다_큰_내용은_원본_바이트로_보낸다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let served = tempfile::tempdir()?;
@@ -893,7 +893,7 @@ async fn sends_content_larger_than_the_frame_limit_as_raw_bytes() -> Result<(), 
 }
 
 #[tokio::test]
-async fn answers_not_found_when_the_coordinator_has_no_such_file() -> Result<(), Box<dyn Error>> {
+async fn 코디네이터에_해당_파일이_없으면_not_found로_응답한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let served = tempfile::tempdir()?;
@@ -969,7 +969,7 @@ where
 }
 
 #[tokio::test]
-async fn requests_a_file_from_the_peer_through_the_handle() -> Result<(), Box<dyn Error>> {
+async fn 핸들을_통해_피어에게_파일을_요청한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (events, mut received) = mpsc::channel(8);
@@ -1010,7 +1010,7 @@ async fn requests_a_file_from_the_peer_through_the_handle() -> Result<(), Box<dy
 }
 
 #[tokio::test]
-async fn returns_none_when_the_peer_does_not_have_the_file() -> Result<(), Box<dyn Error>> {
+async fn 피어에게_파일이_없으면_None을_반환한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (events, mut received) = mpsc::channel(8);
@@ -1038,7 +1038,7 @@ async fn returns_none_when_the_peer_does_not_have_the_file() -> Result<(), Box<d
 }
 
 #[tokio::test]
-async fn fails_when_the_peer_answers_with_an_unexpected_message() -> Result<(), Box<dyn Error>> {
+async fn 피어가_예상치_못한_메시지로_답하면_실패한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (events, mut received) = mpsc::channel(8);
@@ -1066,7 +1066,7 @@ async fn fails_when_the_peer_answers_with_an_unexpected_message() -> Result<(), 
 }
 
 #[tokio::test]
-async fn gives_each_request_its_own_stream_so_downloads_can_overlap() -> Result<(), Box<dyn Error>>
+async fn 요청마다_별도_스트림을_써서_다운로드가_겹칠_수_있다() -> Result<(), Box<dyn Error>>
 {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
@@ -1123,7 +1123,7 @@ async fn gives_each_request_its_own_stream_so_downloads_can_overlap() -> Result<
 }
 
 #[tokio::test]
-async fn forwards_an_index_update_from_the_peer_as_an_event() -> Result<(), Box<dyn Error>> {
+async fn 피어의_index_갱신을_이벤트로_전달한다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (events, mut received) = mpsc::channel(8);
@@ -1150,7 +1150,7 @@ async fn forwards_an_index_update_from_the_peer_as_an_event() -> Result<(), Box<
 }
 
 #[tokio::test]
-async fn sends_an_index_update_to_the_peer_through_the_handle() -> Result<(), Box<dyn Error>> {
+async fn 핸들을_통해_피어에게_index_갱신을_보낸다() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     fixture.pair_peer()?;
     let (events, mut received) = mpsc::channel(8);

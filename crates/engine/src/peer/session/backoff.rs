@@ -27,7 +27,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn doubles_the_delay_until_the_maximum() {
+    fn 지연은_최댓값까지_두_배로_늘어난다() {
         let mut backoff = Backoff::new();
 
         let delays: Vec<Duration> = (0..7).map(|_| backoff.next_delay()).collect();
@@ -36,7 +36,7 @@ mod tests {
     }
 
     #[test]
-    fn starts_over_from_the_initial_delay_after_reset() {
+    fn 리셋_후에는_초기_지연부터_다시_시작한다() {
         let mut backoff = Backoff::new();
         for _ in 0..4 {
             backoff.next_delay();

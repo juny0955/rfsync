@@ -86,7 +86,7 @@ fn read(root: &Path, name: &str) -> Option<Vec<u8>> {
 }
 
 #[tokio::test]
-async fn daemons_started_empty_are_set_up_and_paired_through_the_socket()
+async fn 빈_상태로_시작한_데몬들은_소켓으로_설정되고_페어링된다()
 -> Result<(), Box<dyn Error>> {
     let a = Daemon::new(&[("a.txt", b"from a")])?;
     let b = Daemon::new(&[])?;

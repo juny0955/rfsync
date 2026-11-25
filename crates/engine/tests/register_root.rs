@@ -7,7 +7,7 @@ use rfsync_engine::error::EngineError;
 use rfsync_storage::error::StorageError;
 
 #[test]
-fn registers_canonical_root_path_with_initial_snapshot_and_returns_id() -> Result<(), Box<dyn Error>>
+fn 정규화된_루트_경로를_초기_스냅샷과_함께_등록하고_id를_반환한다() -> Result<(), Box<dyn Error>>
 {
     let test_dir = std::env::temp_dir().join(format!(
         "rfsync-core-{}-{}",
@@ -43,7 +43,7 @@ fn registers_canonical_root_path_with_initial_snapshot_and_returns_id() -> Resul
 }
 
 #[test]
-fn rejects_already_registered_canonical_path() -> Result<(), Box<dyn Error>> {
+fn 이미_등록된_정규화_경로는_거부한다() -> Result<(), Box<dyn Error>> {
     let test_dir = std::env::temp_dir().join(format!(
         "rfsync-duplicate-root-{}-{}",
         std::process::id(),
@@ -71,7 +71,7 @@ fn rejects_already_registered_canonical_path() -> Result<(), Box<dyn Error>> {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn rejects_root_with_non_utf8_path() -> Result<(), Box<dyn Error>> {
+fn UTF8이_아닌_경로의_루트는_거부한다() -> Result<(), Box<dyn Error>> {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
