@@ -175,6 +175,20 @@ pub fn mark_file_deleted(conn: &Connection, file_id: i64) -> Result<bool, Storag
     Ok(deleted > 0)
 }
 
+/// 파일을 삭제 표시하면서 버전도 함께 바꾼다. 삭제도 한 번의 변경이므로 버전이 따라가야 한다.
+pub fn mark_file_deleted_with_version(
+    conn: &Connection,
+    file_id: i64,
+    version: &[u8],
+) -> Result<bool, StorageError> {
+    let deleted = conn.execute(
+        "UPDATE files SET deleted = 1, version = ?1 WHERE id = ?2",
+        params![version, file_id],
+    )?;
+
+    Ok(deleted > 0)
+}
+
 pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> {
     let updated = conn.execute(
         "
@@ -411,6 +425,37 @@ mod tests {
         let files = get_files_by_root_id(&conn, root_id)?;
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, "memo.txt");
+        Ok(())
+    }
+
+    #[test]
+    fn marks_file_deleted_and_updates_only_its_version() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let mut file = sample_file(folder_id);
+        file.version = vec![1];
+        let file_id = insert_file(&conn, &file)?;
+        let mut other = sample_file(folder_id);
+        other.name = "other.txt".into();
+        other.version = vec![7];
+        let other_id = insert_file(&conn, &other)?;
+
+        assert!(mark_file_deleted_with_version(&conn, file_id, &[2, 3])?);
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        let marked = files.iter().find(|f| f.id == file_id).ok_or("missing")?;
+        let untouched = files.iter().find(|f| f.id == other_id).ok_or("missing")?;
+        assert!(marked.deleted);
+        assert_eq!(marked.version, vec![2, 3]);
+        // 삭제 기록에도 지우기 직전 내용의 해시와 크기가 남는다.
+        assert_eq!(
+            (marked.hash.as_str(), marked.size),
+            ("a".repeat(64).as_str(), 42)
+        );
+        assert!(!untouched.deleted);
+        assert_eq!(untouched.version, vec![7]);
+        assert!(!mark_file_deleted_with_version(&conn, 42, &[1])?);
         Ok(())
     }
 
