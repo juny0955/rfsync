@@ -11,7 +11,6 @@ pub(super) async fn serve_file(root: Option<PathBuf>, requested: String) -> Opti
     let root = root?;
     let path = requested.clone();
 
-    // 파일을 읽고 해시를 계산하는 일은 오래 걸릴 수 있어 블로킹 전용 스레드에서 한다.
     let served = match blocking(move || open_for_serving(&root, &requested)).await {
         Ok(Some(served)) => served,
         Ok(None) => {

@@ -16,7 +16,6 @@ pub(crate) struct IpcContext {
     pub db_path: PathBuf,
     /// 페어링 접속을 기다리는 TCP 포트. 데몬의 QUIC 포트와 같다.
     pub port: u16,
-    /// 내 인증서.
     pub cert: Vec<u8>,
     /// 루트를 등록했다는 알림. 쌓여 있으면 받는 쪽이 곧 최신 상태를 읽으므로 가득 차도 괜찮다.
     pub root_added: Sender<()>,
