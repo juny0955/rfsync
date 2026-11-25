@@ -55,7 +55,6 @@ const FILE_COLUMNS: &str = "
     files.deleted,
     files.version";
 
-// 폴더에 속한 파일 조회의 공통 FROM/JOIN 절.
 const FILES_JOIN_FOLDERS: &str = "
     FROM files
     JOIN folders ON files.folder_id = folders.id";

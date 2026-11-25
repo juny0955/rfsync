@@ -87,7 +87,6 @@ pub fn scan_path(root: &Path, path: &Path) -> Result<Option<FsEntry>, FsError> {
             return Ok(None);
         }
 
-        // 중간 경로인데 현재 component가 dir 인지 검사
         if components.peek().is_some() {
             if !file_type.is_dir() {
                 return Ok(None);

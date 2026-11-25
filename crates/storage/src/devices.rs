@@ -15,14 +15,14 @@ pub struct Device {
     pub paired_at: i64,
 }
 
-/// Stores a device by certificate DER and returns its ID.
+/// 인증서(DER)로 기기를 저장하고 ID를 반환한다.
 ///
-/// `paired_at` is the first pairing time in Unix seconds. For an existing
-/// device, a supplied endpoint replaces the stored one and `None` preserves it.
+/// `paired_at`은 처음 페어링한 시각(Unix 초)이다. 이미 있는 기기라면 endpoint를 주었을 때만
+/// 저장된 값을 바꾸고, `None`이면 기존 값을 유지한다.
 ///
 /// # Errors
 ///
-/// Returns [`StorageError::Sqlite`] if the database write fails.
+/// 데이터베이스 쓰기에 실패하면 [`StorageError::Sqlite`]를 반환한다.
 pub fn upsert_device(
     conn: &Connection,
     cert_der: &[u8],
