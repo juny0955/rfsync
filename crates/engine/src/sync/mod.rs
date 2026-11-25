@@ -19,8 +19,8 @@ use tracing::{debug, info, warn};
 use crate::{
     error::EngineError,
     local::{
-        DeleteOutcome, clear_pending, delete_if_unchanged, first_root_path, open_for_serving,
-        record_pending, save_received_file, spawn_watcher,
+        DeleteOutcome, clear_pending, delete_if_unchanged, first_root_path, merge_versions,
+        open_for_serving, record_pending, save_received_file, spawn_watcher,
     },
     peer::{self, FileOffer, Identity, PeerEvent, PeerHandle, load_index},
     sync::compare::{IndexComparison, changed_entries, compare_index},
@@ -121,11 +121,13 @@ async fn run_coordinator(
                         peer,
                     } => {
                         peers.push(peer.clone());
-                        start_fetch(&index, &root, &db_path, peer, &peer_index);
+                        let merge = start_fetch(&index, &root, &db_path, peer, &peer_index);
+                        merge_and_reload(&mut index, &db_path, merge, &wiring.index_tx).await;
                     }
                     // 연결된 뒤의 변경도 첫 목록과 같은 비교와 받아 오기를 거친다. 바뀐 항목만 들어 있다.
                     PeerEvent::IndexUpdated { entries, peer } => {
-                        start_fetch(&index, &root, &db_path, peer, &entries)
+                        let merge = start_fetch(&index, &root, &db_path, peer, &entries);
+                        merge_and_reload(&mut index, &db_path, merge, &wiring.index_tx).await;
                     }
                     PeerEvent::FileRequested { path, reply } => {
                         // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
@@ -201,13 +203,14 @@ async fn on_local_changed(
 }
 
 /// 상대의 목록(또는 변경 목록)을 내 목록과 비교해, 내게 없는 파일을 받아 오고 상대가 지운 파일을 지우는 작업을 띄운다.
+/// 내용이 같아 버전만 합치면 되는 항목을 돌려준다.
 fn start_fetch(
     mine: &[Entry],
     root: &Option<PathBuf>,
     db_path: &Path,
     peer: PeerHandle,
     theirs: &[Entry],
-) {
+) -> Vec<Entry> {
     let comparison = on_index_received(mine, theirs);
     match root.clone() {
         // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
@@ -227,6 +230,41 @@ fn start_fetch(
             ));
         }
         None => debug!("등록된 루트가 없어 파일을 받거나 지우지 않습니다"),
+    }
+    comparison.merge
+}
+
+/// 내용이 같은 파일의 버전을 합쳐 DB에 저장하고, 바뀌었으면 목록을 다시 읽어 세션에 알린다.
+/// 상대에게는 알리지 않는다. 내용이 그대로여서 상대가 알아야 할 변경이 아니고, 상대도 같은 비교로 스스로 합친다.
+async fn merge_and_reload(
+    index: &mut Vec<Entry>,
+    db_path: &Path,
+    merge: Vec<Entry>,
+    index_tx: &watch::Sender<Arc<Vec<Entry>>>,
+) {
+    if merge.is_empty() {
+        return;
+    }
+    let path = db_path.to_path_buf();
+    let result = spawn_blocking(move || {
+        let merged = merge_versions(&path, &merge)?;
+        let index = if merged > 0 {
+            Some(load_index(&path)?)
+        } else {
+            None
+        };
+        Ok::<_, EngineError>((merged, index))
+    })
+    .await;
+    match result {
+        Ok(Ok((merged, Some(new_index)))) => {
+            info!("내용이 같은 파일 {merged}개의 버전을 합쳤습니다");
+            *index = new_index;
+            index_tx.send_replace(Arc::new(index.clone()));
+        }
+        Ok(Ok((_, None))) => {}
+        Ok(Err(e)) => warn!("파일 버전을 합치지 못했습니다: {e}"),
+        Err(e) => warn!("파일 버전 합치기 작업이 실패했습니다: {e}"),
     }
 }
 
@@ -382,18 +420,31 @@ fn matches_entry(entry: &Entry, size: u64, hash: &[u8; 32]) -> bool {
 fn on_index_received(mine: &[Entry], theirs: &[Entry]) -> IndexComparison {
     let comparison = compare_index(mine, theirs);
     info!(
-        "내게 없는 파일 {}개, 내용이 다른 파일 {}개, 상대가 지운 파일 {}개",
+        "내게 없는 파일 {}개, 상대가 더 최신인 파일 {}개, 동시에 고친 파일 {}개, 상대가 지운 파일 {}개, 버전만 합칠 파일 {}개",
         comparison.missing.len(),
-        comparison.changed.len(),
-        comparison.deleted.len()
+        comparison.updated.len(),
+        comparison.conflicts.len(),
+        comparison.deleted.len(),
+        comparison.merge.len()
     );
 
     for entry in &comparison.missing {
         debug!("내게 없는 파일: {}", entry.path);
     }
 
-    for entry in &comparison.changed {
-        debug!("내용이 다른 파일: {}", entry.path);
+    // 덮어쓰기 받기와 충돌 처리는 아직 없다. 알리기만 하고 건드리지 않는다.
+    for entry in &comparison.updated {
+        debug!(
+            "상대가 더 최신인 파일(덮어쓰기는 아직 없음): {}",
+            entry.path
+        );
+    }
+
+    for entry in &comparison.conflicts {
+        warn!(
+            "양쪽에서 동시에 고친 파일(충돌 처리는 아직 없음): {}",
+            entry.path
+        );
     }
 
     for entry in &comparison.deleted {
@@ -422,14 +473,16 @@ mod tests {
     }
 
     #[test]
-    fn 상대에게만_있는_파일과_내용이_다른_파일을_나눠서_돌려준다() {
+    fn 상대에게만_있는_파일과_상대가_더_최신인_파일을_나눠서_돌려준다() {
+        let mut newer = entry("b.txt", 9);
+        newer.version.bump(DeviceId::from_cert(b"peer"));
         let mine = vec![entry("a.txt", 1), entry("b.txt", 2)];
-        let theirs = vec![entry("a.txt", 1), entry("b.txt", 9), entry("c.txt", 3)];
+        let theirs = vec![entry("a.txt", 1), newer.clone(), entry("c.txt", 3)];
 
         let comparison = on_index_received(&mine, &theirs);
 
         assert_eq!(comparison.missing, vec![entry("c.txt", 3)]);
-        assert_eq!(comparison.changed, vec![entry("b.txt", 9)]);
+        assert_eq!(comparison.updated, vec![newer]);
     }
 
     /// coordinator를 띄우고, 파일 하나를 요청해 답을 받아 온다.

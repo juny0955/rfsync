@@ -339,6 +339,14 @@ async fn a_file_deleted_while_connected_is_deleted_on_the_other_node() -> Result
         .await;
         assert!(ready.is_ok(), "연결과 감시가 준비되지 않았다");
 
+        // 같은 내용을 각자 따로 등록해 버전이 서로 앞서지 않았다. 연결되면 양쪽이 버전을 합친다.
+        // 합치기 전에 지우면 동시에 고친 것으로 보여 삭제가 전달되지 않는다.
+        wait_until("양쪽의 doomed.txt 버전이 합쳐진다", || {
+            a.version_of("doomed.txt").is_some()
+                && a.version_of("doomed.txt") == b.version_of("doomed.txt")
+        })
+        .await;
+
         fs::remove_file(a.root.join("doomed.txt")).unwrap();
 
         wait_until("b에서도 doomed.txt가 지워진다", || {
