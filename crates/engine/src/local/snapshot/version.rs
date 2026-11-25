@@ -3,33 +3,44 @@ use rfsync_storage::{File, SyncPending};
 
 use crate::error::EngineError;
 
-/// 내가 파일을 지운 것을 DB에 반영할 때 저장할 version 바이트를 정한다.
+/// 파일이 지워진 것을 DB에 반영할 때 저장할 version 바이트를 정한다.
 /// 삭제도 한 번의 변경이므로 이전 version에서 내 카운터를 올린다. 해시는 지우기 직전 내용의 것이다.
-pub(super) fn deleted_file_version(file: &File, me: DeviceId) -> Result<Vec<u8>, EngineError> {
+/// 상대가 지우라고 해서 지운 것이면(`pending`이 삭제와 같다) 상대의 version을 그대로 쓴다.
+pub(super) fn deleted_file_version(
+    file: &File,
+    pending: Option<&SyncPending>,
+    me: DeviceId,
+) -> Result<Vec<u8>, EngineError> {
     let before = VersionVector::from_bytes(&file.version)?;
-    Ok(next_version(&before, &file.hash, true, None, me).to_bytes()?)
+    Ok(next_version(&before, &file.hash, true, pending, me).to_bytes()?)
 }
 
-/// 내가 직접 본 변경을 DB에 반영할 때 저장할 version 바이트를 정한다.
+/// 디스크에서 본 파일을 DB에 반영할 때 저장할 version 바이트를 정한다.
 ///
+/// - 상대에게서 받아 적용한 파일이면(`pending`이 관측한 내용과 같다) 상대의 version을 그대로 쓴다.
 /// - 이전 행이 없으면 새 파일이므로 `{나: 1}`이다.
 /// - 삭제 표시가 아니고 해시가 같으면 내용이 안 바뀐 것(수정 시각만 달라진 경우)이라 version을 그대로 둔다.
 /// - 해시가 달라졌거나, 삭제 표시된 파일이 돌아왔으면 이전 version에서 내 카운터를 올린다.
 pub(super) fn next_file_version(
     previous: Option<&File>,
     observed_hash: &str,
+    pending: Option<&SyncPending>,
     me: DeviceId,
 ) -> Result<Vec<u8>, EngineError> {
-    let Some(file) = previous else {
-        let first = next_version(&VersionVector::default(), observed_hash, false, None, me);
-        return Ok(first.to_bytes()?);
-    };
-    if !file.deleted && file.hash == observed_hash {
+    let unchanged = previous.is_some_and(|file| !file.deleted && file.hash == observed_hash);
+    let received = pending.is_some_and(|p| p.hash == observed_hash && !p.deleted);
+    if let Some(file) = previous
+        && unchanged
+        && !received
+    {
         return Ok(file.version.clone());
     }
 
-    let before = VersionVector::from_bytes(&file.version)?;
-    Ok(next_version(&before, observed_hash, false, None, me).to_bytes()?)
+    let before = match previous {
+        Some(file) => VersionVector::from_bytes(&file.version)?,
+        None => VersionVector::default(),
+    };
+    Ok(next_version(&before, observed_hash, false, pending, me).to_bytes()?)
 }
 
 /// 감시자가 파일의 변경을 DB에 반영할 때 저장할 버전을 정한다.
@@ -224,7 +235,7 @@ mod tests {
 
     #[test]
     fn 이전_행이_없는_새_파일은_내_카운터가_1이다() {
-        let bytes = next_file_version(None, &"a".repeat(64), device("me")).unwrap();
+        let bytes = next_file_version(None, &"a".repeat(64), None, device("me")).unwrap();
 
         assert_eq!(
             VersionVector::from_bytes(&bytes).unwrap(),
@@ -237,7 +248,7 @@ mod tests {
         let version = vector(&[("peer", 2), ("me", 1)]);
         let file = stored("a", false, &version);
 
-        let bytes = next_file_version(Some(&file), &"a".repeat(64), device("me")).unwrap();
+        let bytes = next_file_version(Some(&file), &"a".repeat(64), None, device("me")).unwrap();
 
         assert_eq!(bytes, file.version);
     }
@@ -246,7 +257,7 @@ mod tests {
     fn 해시가_달라지면_이전_version에서_내_카운터를_올린다() {
         let file = stored("a", false, &vector(&[("peer", 2), ("me", 1)]));
 
-        let bytes = next_file_version(Some(&file), &"b".repeat(64), device("me")).unwrap();
+        let bytes = next_file_version(Some(&file), &"b".repeat(64), None, device("me")).unwrap();
 
         assert_eq!(
             VersionVector::from_bytes(&bytes).unwrap(),
@@ -258,7 +269,7 @@ mod tests {
     fn 삭제_표시된_파일이_같은_내용으로_돌아오면_올린다() {
         let file = stored("a", true, &vector(&[("me", 2)]));
 
-        let bytes = next_file_version(Some(&file), &"a".repeat(64), device("me")).unwrap();
+        let bytes = next_file_version(Some(&file), &"a".repeat(64), None, device("me")).unwrap();
 
         assert_eq!(
             VersionVector::from_bytes(&bytes).unwrap(),
@@ -271,14 +282,84 @@ mod tests {
         let mut file = stored("a", false, &VersionVector::default());
         file.version = Vec::new();
 
-        assert!(next_file_version(Some(&file), &"b".repeat(64), device("me")).is_err());
+        assert!(next_file_version(Some(&file), &"b".repeat(64), None, device("me")).is_err());
+    }
+
+    fn received(hash_char: &str, deleted: bool, version: &VersionVector) -> SyncPending {
+        SyncPending {
+            path: "a.txt".into(),
+            hash: hash_char.repeat(64),
+            deleted,
+            version: version.to_bytes().unwrap(),
+        }
+    }
+
+    #[test]
+    fn 받은_새_파일은_상대의_version을_그대로_쓴다() {
+        let theirs = vector(&[("peer", 3)]);
+        let pending = received("a", false, &theirs);
+
+        let bytes = next_file_version(None, &"a".repeat(64), Some(&pending), device("me")).unwrap();
+
+        assert_eq!(VersionVector::from_bytes(&bytes).unwrap(), theirs);
+    }
+
+    #[test]
+    fn 받아서_덮어쓴_파일도_상대의_version을_그대로_쓴다() {
+        let file = stored("a", false, &vector(&[("peer", 1), ("me", 1)]));
+        let theirs = vector(&[("peer", 2), ("me", 1)]);
+        let pending = received("b", false, &theirs);
+
+        let bytes =
+            next_file_version(Some(&file), &"b".repeat(64), Some(&pending), device("me")).unwrap();
+
+        assert_eq!(VersionVector::from_bytes(&bytes).unwrap(), theirs);
+    }
+
+    #[test]
+    fn 받은_기록과_내용이_다르면_받은_이력을_합친_뒤_올린다() {
+        let file = stored("a", false, &vector(&[("me", 1)]));
+        let pending = received("b", false, &vector(&[("peer", 2)]));
+
+        let bytes =
+            next_file_version(Some(&file), &"c".repeat(64), Some(&pending), device("me")).unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            vector(&[("peer", 2), ("me", 2)])
+        );
+    }
+
+    #[test]
+    fn 상대가_지워서_지운_파일은_상대의_version을_그대로_쓴다() {
+        let file = stored("a", false, &vector(&[("me", 1)]));
+        let theirs = vector(&[("me", 1), ("peer", 1)]);
+        let pending = received("a", true, &theirs);
+
+        let bytes = deleted_file_version(&file, Some(&pending), device("me")).unwrap();
+
+        assert_eq!(VersionVector::from_bytes(&bytes).unwrap(), theirs);
+    }
+
+    #[test]
+    fn 받은_파일을_지운_기록이_아니면_내가_지운_것이다() {
+        let file = stored("a", false, &vector(&[("me", 1)]));
+        // 파일을 받는다는 기록이 남아 있어도 지우기는 내가 한 것이다.
+        let pending = received("a", false, &vector(&[("peer", 1)]));
+
+        let bytes = deleted_file_version(&file, Some(&pending), device("me")).unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            vector(&[("peer", 1), ("me", 2)])
+        );
     }
 
     #[test]
     fn 삭제하면_이전_version에서_내_카운터만_올린다() {
         let file = stored("a", false, &vector(&[("peer", 2), ("me", 1)]));
 
-        let bytes = deleted_file_version(&file, device("me")).unwrap();
+        let bytes = deleted_file_version(&file, None, device("me")).unwrap();
 
         assert_eq!(
             VersionVector::from_bytes(&bytes).unwrap(),
@@ -291,6 +372,6 @@ mod tests {
         let mut file = stored("a", false, &VersionVector::default());
         file.version = Vec::new();
 
-        assert!(deleted_file_version(&file, device("me")).is_err());
+        assert!(deleted_file_version(&file, None, device("me")).is_err());
     }
 }

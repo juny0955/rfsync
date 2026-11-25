@@ -534,3 +534,133 @@ fn replacing_a_file_with_a_folder_raises_the_old_files_counter() -> Result<(), B
     assert_eq!(stored_version(&f, "", "item")?, my_version(2));
     Ok(())
 }
+
+/// 상대에게서 받는 중이라는 기록을 남긴다. `content`는 받는 파일의 내용이다.
+fn put_pending(
+    f: &Fixture,
+    path: &str,
+    content: &[u8],
+    deleted: bool,
+    version: &VersionVector,
+) -> Result<(), Box<dyn Error>> {
+    let conn = rfsync_storage::open(&f.db)?;
+    rfsync_storage::put_sync_pending(
+        &conn,
+        f.root_id,
+        &rfsync_storage::SyncPending {
+            path: path.to_owned(),
+            hash: blake3::hash(content).to_hex().to_string(),
+            deleted,
+            version: version.to_bytes()?,
+        },
+    )?;
+    Ok(())
+}
+
+fn pending_left(f: &Fixture, path: &str) -> Result<bool, Box<dyn Error>> {
+    let conn = rfsync_storage::open(&f.db)?;
+    Ok(rfsync_storage::take_sync_pending(&conn, f.root_id, path)?.is_some())
+}
+
+fn peer_version(times: u32) -> VersionVector {
+    let mut version = VersionVector::default();
+    for _ in 0..times {
+        version.bump(rfsync_protocol::DeviceId::from_cert(b"peer"));
+    }
+    version
+}
+
+#[test]
+fn a_received_file_keeps_the_peers_version_in_sync_path_and_sync_root() -> Result<(), Box<dyn Error>>
+{
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::write(f.root.join("docs/by_path"), b"one")?;
+    put_pending(&f, "docs/by_path", b"one", false, &peer_version(2))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/by_path"))?;
+    fs::write(f.root.join("by_root"), b"two")?;
+    put_pending(&f, "by_root", b"two", false, &peer_version(3))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "docs", "by_path")?, peer_version(2));
+    assert_eq!(stored_version(&f, "", "by_root")?, peer_version(3));
+    // 쓴 기록은 지워지고, 같은 파일에 이어 오는 이벤트는 version을 바꾸지 않는다.
+    assert!(!pending_left(&f, "docs/by_path")?);
+    assert!(!pending_left(&f, "by_root")?);
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/by_path"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    assert_eq!(stored_version(&f, "docs", "by_path")?, peer_version(2));
+    Ok(())
+}
+
+#[test]
+fn editing_a_received_file_again_merges_the_peers_history_and_raises_mine()
+-> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("memo"), b"received")?;
+    put_pending(&f, "memo", b"received", false, &peer_version(1))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    // 받은 직후 내가 또 고쳤다.
+    fs::write(f.root.join("memo"), b"mine")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    let mut expected = peer_version(1);
+    expected.bump(test_device());
+    assert_eq!(stored_version(&f, "", "memo")?, expected);
+    Ok(())
+}
+
+#[test]
+fn a_pending_record_that_does_not_match_the_content_is_merged_not_adopted()
+-> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    // 받기로 한 내용(other)과 디스크의 내용이 달라, 받은 기록으로 볼 수 없다.
+    fs::write(f.root.join("memo"), b"edited")?;
+    put_pending(&f, "memo", b"other", false, &peer_version(1))?;
+
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    let mut expected = my_version(2);
+    expected.merge(&peer_version(1));
+    assert_eq!(stored_version(&f, "", "memo")?, expected);
+    assert!(!pending_left(&f, "memo")?);
+    Ok(())
+}
+
+#[test]
+fn a_file_deleted_because_the_peer_deleted_it_keeps_the_peers_version() -> Result<(), Box<dyn Error>>
+{
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    fs::write(f.root.join("docs/by_path"), b"a")?;
+    fs::write(f.root.join("by_root"), b"b")?;
+    fs::create_dir(f.root.join("tree"))?;
+    fs::write(f.root.join("tree/inner"), b"c")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    let mut theirs = my_version(1);
+    theirs.bump(rfsync_protocol::DeviceId::from_cert(b"peer"));
+
+    put_pending(&f, "docs/by_path", b"a", true, &theirs)?;
+    fs::remove_file(f.root.join("docs/by_path"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/by_path"))?;
+    put_pending(&f, "by_root", b"b", true, &theirs)?;
+    fs::remove_file(f.root.join("by_root"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    put_pending(&f, "tree/inner", b"c", true, &theirs)?;
+    fs::remove_dir_all(f.root.join("tree"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("tree"))?;
+
+    assert_eq!(stored_version(&f, "docs", "by_path")?, theirs);
+    assert_eq!(stored_version(&f, "", "by_root")?, theirs);
+    assert_eq!(stored_version(&f, "tree", "inner")?, theirs);
+    assert!(!pending_left(&f, "docs/by_path")?);
+    assert!(!pending_left(&f, "by_root")?);
+    assert!(!pending_left(&f, "tree/inner")?);
+    Ok(())
+}

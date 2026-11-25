@@ -19,6 +19,14 @@ mod entry;
 mod sync;
 mod version;
 
+/// 쓰기 트랜잭션을 시작한다. 처음부터 쓰기 잠금을 잡아, 읽고 나서 쓰려는 사이에 다른 연결(받는 쪽의
+/// `sync_pending` 기록 등)이 먼저 써서 `database is locked`로 바로 실패하는 일을 막는다. 잠겨 있으면 기다린다.
+fn begin_write(conn: &mut DbConnection) -> Result<rfsync_storage::Transaction<'_>, EngineError> {
+    Ok(conn
+        .transaction_with_behavior(rfsync_storage::TransactionBehavior::Immediate)
+        .map_err(StorageError::from)?)
+}
+
 pub fn create_initial_snapshot(
     conn: &mut DbConnection,
     root_id: i64,
@@ -36,7 +44,7 @@ pub fn create_initial_snapshot(
     let mut folder_ids = HashMap::<PathBuf, i64>::new();
 
     // === START TRANSACTION ===
-    let tx = conn.transaction().map_err(StorageError::from)?;
+    let tx = begin_write(conn)?;
     let root_folder_id = rfsync_storage::insert_folder(&tx, root_id, "")?;
     folder_ids.insert(PathBuf::new(), root_folder_id);
 
@@ -49,7 +57,7 @@ pub fn create_initial_snapshot(
     }
 
     for entry in entries.iter().filter(|entry| !entry.is_dir()) {
-        let file = to_local_storage_file(entry, 0, &folder_ids, None, me)?;
+        let file = to_local_storage_file(entry, 0, &folder_ids, None, None, me)?;
         rfsync_storage::insert_file(&tx, &file)?;
     }
 
@@ -73,7 +81,7 @@ pub fn sync_root(conn: &mut DbConnection, root: &Root, me: DeviceId) -> Result<(
     let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
     // === START TRANSACTION ===
-    let tx = conn.transaction().map_err(StorageError::from)?;
+    let tx = begin_write(conn)?;
     let folders = rfsync_storage::get_folders_by_root_id(&tx, root.id)?;
     let files = rfsync_storage::get_files_by_root_id(&tx, root.id)?;
 
@@ -96,7 +104,7 @@ pub fn sync_path(
 
     let target_path = portable_path(target)?;
     // === START TRANSACTION ===
-    let tx = conn.transaction().map_err(StorageError::from)?;
+    let tx = begin_write(conn)?;
 
     match entry {
         // 폴더

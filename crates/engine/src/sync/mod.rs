@@ -19,8 +19,8 @@ use tracing::{debug, info, warn};
 use crate::{
     error::EngineError,
     local::{
-        DeleteOutcome, delete_if_unchanged, first_root_path, open_for_serving, save_received_file,
-        spawn_watcher,
+        DeleteOutcome, clear_pending, delete_if_unchanged, first_root_path, open_for_serving,
+        record_pending, save_received_file, spawn_watcher,
     },
     peer::{self, FileOffer, Identity, PeerEvent, PeerHandle, load_index},
     sync::compare::{IndexComparison, changed_entries, compare_index},
@@ -121,11 +121,11 @@ async fn run_coordinator(
                         peer,
                     } => {
                         peers.push(peer.clone());
-                        start_fetch(&index, &root, peer, &peer_index);
+                        start_fetch(&index, &root, &db_path, peer, &peer_index);
                     }
                     // 연결된 뒤의 변경도 첫 목록과 같은 비교와 받아 오기를 거친다. 바뀐 항목만 들어 있다.
                     PeerEvent::IndexUpdated { entries, peer } => {
-                        start_fetch(&index, &root, peer, &entries)
+                        start_fetch(&index, &root, &db_path, peer, &entries)
                     }
                     PeerEvent::FileRequested { path, reply } => {
                         // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
@@ -201,15 +201,30 @@ async fn on_local_changed(
 }
 
 /// 상대의 목록(또는 변경 목록)을 내 목록과 비교해, 내게 없는 파일을 받아 오고 상대가 지운 파일을 지우는 작업을 띄운다.
-fn start_fetch(mine: &[Entry], root: &Option<PathBuf>, peer: PeerHandle, theirs: &[Entry]) {
+fn start_fetch(
+    mine: &[Entry],
+    root: &Option<PathBuf>,
+    db_path: &Path,
+    peer: PeerHandle,
+    theirs: &[Entry],
+) {
     let comparison = on_index_received(mine, theirs);
     match root.clone() {
         // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
         Some(root) => {
             if !comparison.deleted.is_empty() {
-                tokio::spawn(delete_files(root.clone(), comparison.deleted));
+                tokio::spawn(delete_files(
+                    root.clone(),
+                    db_path.to_path_buf(),
+                    comparison.deleted,
+                ));
             }
-            tokio::spawn(fetch_missing(peer, root, comparison.missing));
+            tokio::spawn(fetch_missing(
+                peer,
+                root,
+                db_path.to_path_buf(),
+                comparison.missing,
+            ));
         }
         None => debug!("등록된 루트가 없어 파일을 받거나 지우지 않습니다"),
     }
@@ -218,11 +233,21 @@ fn start_fetch(mine: &[Entry], root: &Option<PathBuf>, peer: PeerHandle, theirs:
 /// 상대가 지운 파일을 내 폴더에서 지운다. 내용이 목록의 해시와 같은 파일만 지우며, 한 파일이 실패해도 나머지는 계속한다.
 ///
 /// 지운 뒤의 삭제 기록은 감시가 폴더 변화를 보고 DB에 남기고, 상대에게도 같은 경로로 알린다.
-async fn delete_files(root: PathBuf, deleted: Vec<Entry>) {
+async fn delete_files(root: PathBuf, db_path: PathBuf, deleted: Vec<Entry>) {
     for entry in deleted {
         let (path, hash, root) = (entry.path.clone(), entry.hash, root.clone());
+        let (pending_entry, pending_db) = (entry.clone(), db_path.clone());
         // 파일을 읽고 해시를 계산하는 일은 오래 걸릴 수 있어 블로킹 전용 스레드에서 한다.
-        let result = spawn_blocking(move || delete_if_unchanged(&root, &path, &hash)).await;
+        let result = spawn_blocking(move || {
+            // 감시자가 삭제를 내가 지운 것으로 오해하지 않도록, 지우기 전에 상대가 지웠다는 기록을 남긴다.
+            record_pending(&pending_db, &pending_entry, true)?;
+            delete_if_unchanged(&root, &path, &hash)
+        })
+        .await;
+        // 지우지 않았다면 기록은 쓸모가 없다. 남겨 두면 나중에 내가 고친 것으로 쓰이지 않고 상대의 버전이 쓰인다.
+        if !matches!(result, Ok(Ok(DeleteOutcome::Deleted))) {
+            clear_pending_logged(&db_path, &entry.path).await;
+        }
         match result {
             Ok(Ok(DeleteOutcome::Deleted)) => {
                 info!("상대가 지워서 파일을 지웠습니다: {}", entry.path)
@@ -273,9 +298,9 @@ async fn serve_file(root: Option<PathBuf>, requested: String) -> Option<FileOffe
 /// 내게 없는 파일을 상대에게서 하나씩 받아 온다. 한 파일이 실패해도 나머지는 계속 받는다.
 ///
 /// 파일마다 새 스트림을 쓰므로 동시에 받을 수도 있지만, 지금은 순서대로 하나씩 받는다.
-async fn fetch_missing(peer: PeerHandle, root: PathBuf, missing: Vec<Entry>) {
+async fn fetch_missing(peer: PeerHandle, root: PathBuf, db_path: PathBuf, missing: Vec<Entry>) {
     for entry in &missing {
-        match fetch_file(&peer, &root, entry).await {
+        match fetch_file(&peer, &root, &db_path, entry).await {
             Ok(FetchOutcome::Saved) => info!("파일을 받았습니다: {}", entry.path),
             Ok(FetchOutcome::MissingOnPeer) => {
                 warn!("상대에게 파일이 없습니다: {}", entry.path)
@@ -305,6 +330,7 @@ enum FetchOutcome {
 async fn fetch_file(
     peer: &PeerHandle,
     root: &Path,
+    db_path: &Path,
     entry: &Entry,
 ) -> Result<FetchOutcome, EngineError> {
     let Some(mut download) = peer.request_file(&entry.path).await? else {
@@ -315,15 +341,37 @@ async fn fetch_file(
         return Ok(FetchOutcome::ChangedOnPeer);
     }
 
-    save_received_file(
+    // 감시자가 받은 파일을 내가 만든 것으로 오해하지 않도록, 파일이 생기기 전에 상대의 버전을 기록해 둔다.
+    let (pending_db, pending_entry) = (db_path.to_path_buf(), entry.clone());
+    spawn_blocking(move || record_pending(&pending_db, &pending_entry, false))
+        .await
+        .map_err(std::io::Error::other)??;
+
+    let saved = save_received_file(
         root,
         &entry.path,
         download.size,
         download.hash,
         &mut download.reader,
     )
-    .await?;
+    .await;
+    if let Err(e) = saved {
+        // 파일이 생기지 않았으므로 기록도 지운다.
+        clear_pending_logged(db_path, &entry.path).await;
+        return Err(e);
+    }
     Ok(FetchOutcome::Saved)
+}
+
+/// 남은 `sync_pending` 기록을 지운다. 지우지 못해도 받는 일은 계속하므로 로그만 남긴다.
+async fn clear_pending_logged(db_path: &Path, path: &str) {
+    let (db_path, path) = (db_path.to_path_buf(), path.to_owned());
+    let logged = path.clone();
+    match spawn_blocking(move || clear_pending(&db_path, &path)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!("남은 수신 기록을 지우지 못했습니다: {logged}: {e}"),
+        Err(e) => warn!("수신 기록 지우기 작업이 실패했습니다: {logged}: {e}"),
+    }
 }
 
 /// 응답 헤더의 크기와 해시가 상대가 보낸 목록의 항목과 같은가.

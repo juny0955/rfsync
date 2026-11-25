@@ -12,6 +12,7 @@ use std::{
 };
 
 use rfsync_engine::{DeviceId, Identity, register_root, run};
+use rfsync_protocol::VersionVector;
 use tempfile::TempDir;
 use tokio::{
     sync::oneshot,
@@ -66,6 +67,17 @@ impl Node {
             identity: Identity { cert, key },
             port: free_port(),
         })
+    }
+
+    /// DB에 저장된 파일의 version. 이름이 같은 파일은 없다고 가정한다. 감시가 아직 반영하지 않았으면 `None`이다.
+    fn version_of(&self, name: &str) -> Option<VersionVector> {
+        let conn = rfsync_storage::open(&self.db_path).unwrap();
+        let root = rfsync_storage::list_roots(&conn).unwrap().remove(0);
+        let file = rfsync_storage::get_files_by_root_id(&conn, root.id)
+            .unwrap()
+            .into_iter()
+            .find(|file| file.name == name)?;
+        Some(VersionVector::from_bytes(&file.version).unwrap())
     }
 
     /// 루트 아래의 모든 파일을 `상대 경로(/ 구분) → 내용`으로 읽는다.
@@ -191,12 +203,32 @@ async fn each_node_receives_the_files_it_is_missing_from_the_other() -> Result<(
     with_nodes(&a, &b, || async {
         wait_until("b가 a의 파일을 모두 받는다", || b.files() == want).await;
         wait_until("a가 b의 파일을 받는다", || a.files() == want).await;
+        // 받은 파일을 감시가 DB에 반영하는 것은 파일이 생긴 뒤 조금 걸린다.
+        wait_until(
+            "받은 파일의 version이 보낸 쪽과 같아진다",
+            || {
+                ["a.txt", "big.bin", "sub/deep/b.txt"]
+                    .iter()
+                    .map(|path| path.rsplit('/').next().unwrap())
+                    .all(|name| {
+                        b.version_of(name).is_some() && b.version_of(name) == a.version_of(name)
+                    })
+                    && a.version_of("b-only.txt").is_some()
+                    && a.version_of("b-only.txt") == b.version_of("b-only.txt")
+            },
+        )
+        .await;
     })
     .await?;
 
     // 종료 뒤에도 같은 상태이고, 받다 만 임시 파일이나 예상 밖의 파일이 없다.
     assert!(a.files() == want, "a의 최종 파일 목록이 다르다");
     assert!(b.files() == want, "b의 최종 파일 목록이 다르다");
+
+    // 받은 파일은 보낸 쪽의 버전을 그대로 갖는다. 받은 쪽의 카운터가 올라가지 않는다.
+    let mut from_a = VersionVector::default();
+    from_a.bump(DeviceId::from_cert(&a.identity.cert));
+    assert_eq!(b.version_of("a.txt"), Some(from_a));
     Ok(())
 }
 
@@ -313,9 +345,16 @@ async fn a_file_deleted_while_connected_is_deleted_on_the_other_node() -> Result
             !b.files().contains_key("doomed.txt")
         })
         .await;
+        // 삭제 기록은 감시가 반영한 뒤에야 DB에 남는다. 지운 쪽의 버전과 같아질 때까지 기다린다.
+        wait_until("b의 삭제 기록이 a의 것과 같아진다", || {
+            b.version_of("doomed.txt").is_some()
+                && b.version_of("doomed.txt") == a.version_of("doomed.txt")
+        })
+        .await;
     })
     .await?;
 
+    // 상대가 지워서 지운 파일의 삭제 기록은 지운 쪽의 버전을 그대로 갖는다.
     for node in [&a, &b] {
         let files = node.files();
         assert!(!files.contains_key("doomed.txt"), "지운 파일이 남아 있다");

@@ -5,6 +5,7 @@ use std::{
 
 use rfsync_fs::{FsEntry, FsEntryKind};
 use rfsync_protocol::DeviceId;
+use rfsync_storage::SyncPending;
 
 use super::version::next_file_version;
 use crate::error::EngineError;
@@ -78,15 +79,16 @@ pub(super) fn to_storage_file(
     })
 }
 
-/// 내가 직접 본 변경을 저장할 행으로 바꾼다. version은 이전 행(`previous`)과 새 해시로 정한다.
+/// 디스크에서 본 변경을 저장할 행으로 바꾼다. version은 이전 행(`previous`), 새 해시, 상대에게서 받은 기록(`pending`)으로 정한다.
 pub(super) fn to_local_storage_file(
     entry: &FsEntry,
     id: i64,
     folder_ids: &HashMap<PathBuf, i64>,
     previous: Option<&rfsync_storage::File>,
+    pending: Option<&SyncPending>,
     me: DeviceId,
 ) -> Result<rfsync_storage::File, EngineError> {
     let mut file = to_storage_file(entry, id, folder_ids, Vec::new())?;
-    file.version = next_file_version(previous, &file.hash, me)?;
+    file.version = next_file_version(previous, &file.hash, pending, me)?;
     Ok(file)
 }

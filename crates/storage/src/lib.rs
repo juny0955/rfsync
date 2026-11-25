@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use rusqlite::TransactionBehavior;
-
 use crate::error::StorageError;
 
 mod devices;
@@ -17,7 +15,7 @@ pub use folder::*;
 pub use root::*;
 pub use sync_pending::*;
 
-pub use rusqlite::{Connection as DbConnection, Transaction};
+pub use rusqlite::{Connection as DbConnection, Transaction, TransactionBehavior};
 
 pub fn open(path: &Path) -> Result<DbConnection, StorageError> {
     let mut conn = DbConnection::open(path)?;

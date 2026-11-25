@@ -2,6 +2,7 @@
 //! 상대 장치(`peer`)를 알지 못한다. 둘을 잇는 일은 앞으로 만들 coordinator가 맡는다.
 
 mod path;
+mod pending;
 mod receive;
 mod remove;
 mod root;
@@ -9,6 +10,7 @@ mod serve;
 mod snapshot;
 mod watcher;
 
+pub(crate) use pending::{clear_pending, record_pending};
 pub(crate) use receive::save_received_file;
 pub(crate) use remove::{DeleteOutcome, delete_if_unchanged};
 pub(crate) use root::first_root_path;

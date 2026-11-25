@@ -36,7 +36,7 @@ pub fn sync_directory(
     let (parent_path, name) = split_parent_and_name(target_path);
 
     if let Some(file) = rfsync_storage::get_file_by_folder_and_name(tx, root_id, parent_path, name)?
-        && !mark_deleted(tx, &file, me)?
+        && !mark_deleted(tx, root_id, target_path, &file, me)?
     {
         return Err(EngineError::FileNotFound(target.to_path_buf()));
     }
@@ -72,6 +72,8 @@ pub fn sync_file(
 
     let existing =
         rfsync_storage::get_file_by_folder_id_and_name(tx, root_id, parent.id, file_name)?;
+    // 상대에게서 받은 파일이면 그 기록을 꺼낸다. 이 파일의 version은 받은 것을 따른다.
+    let pending = rfsync_storage::take_sync_pending(tx, root_id, target_path)?;
 
     let folder_ids = HashMap::from([(
         target.parent().unwrap_or(Path::new("")).to_path_buf(),
@@ -80,13 +82,21 @@ pub fn sync_file(
 
     match existing {
         Some(file) => {
-            let updated = to_local_storage_file(&entry, file.id, &folder_ids, Some(&file), me)?;
+            let updated = to_local_storage_file(
+                &entry,
+                file.id,
+                &folder_ids,
+                Some(&file),
+                pending.as_ref(),
+                me,
+            )?;
             if !rfsync_storage::update_file(tx, updated)? {
                 return Err(EngineError::FileNotFound(target.to_path_buf()));
             }
         }
         None => {
-            let new_file = to_local_storage_file(&entry, 0, &folder_ids, None, me)?;
+            let new_file =
+                to_local_storage_file(&entry, 0, &folder_ids, None, pending.as_ref(), me)?;
             rfsync_storage::insert_file(tx, &new_file)?;
         }
     }
@@ -107,7 +117,7 @@ pub fn remove_path(
     if let Some(file) =
         rfsync_storage::get_file_by_folder_and_name(tx, root_id, folder_path, file_name)?
     {
-        mark_deleted(tx, &file, me)?;
+        mark_deleted(tx, root_id, target_path, &file, me)?;
     }
 
     Ok(())
@@ -132,7 +142,7 @@ pub fn apply_diff(
             .get(&remove_file_id)
             .copied()
             .ok_or_else(|| EngineError::FileNotFound(path.clone()))?;
-        if !mark_deleted(tx, file, me)? {
+        if !mark_deleted(tx, root_id, &portable_path(&path)?, file, me)? {
             return Err(EngineError::FileNotFound(path.clone()));
         }
     }
@@ -144,7 +154,9 @@ pub fn apply_diff(
     }
 
     for added_entry in diff.added_files {
-        let file = to_local_storage_file(added_entry, 0, &folder_ids, None, me)?;
+        let pending =
+            rfsync_storage::take_sync_pending(tx, root_id, &portable_path(&added_entry.path)?)?;
+        let file = to_local_storage_file(added_entry, 0, &folder_ids, None, pending.as_ref(), me)?;
         rfsync_storage::insert_file(tx, &file)?;
     }
 
@@ -153,11 +165,14 @@ pub fn apply_diff(
             .get(&modified_file_id)
             .copied()
             .ok_or_else(|| EngineError::FileNotFound(modified_entry.path.clone()))?;
+        let pending =
+            rfsync_storage::take_sync_pending(tx, root_id, &portable_path(&modified_entry.path)?)?;
         let file = to_local_storage_file(
             modified_entry,
             modified_file_id,
             &folder_ids,
             Some(before),
+            pending.as_ref(),
             me,
         )?;
         if !rfsync_storage::update_file(tx, file)? {
@@ -178,26 +193,42 @@ fn mark_folder_tree_deleted(
     let folders = rfsync_storage::get_folders_with_under_path(tx, root_id, target_path)?;
     let folder_ids: Vec<i64> = folders.iter().map(|folder| folder.id).collect();
 
+    let folder_paths: HashMap<i64, &str> = folders
+        .iter()
+        .map(|folder| (folder.id, folder.relative_path.as_str()))
+        .collect();
+
     for file in rfsync_storage::get_files_in_folder_ids(tx, &folder_ids)? {
-        mark_deleted(tx, &file, me)?;
+        let folder_path = folder_paths.get(&file.folder_id).copied().unwrap_or("");
+        let path = if folder_path.is_empty() {
+            file.name.clone()
+        } else {
+            format!("{folder_path}/{}", file.name)
+        };
+        mark_deleted(tx, root_id, &path, &file, me)?;
     }
 
     Ok(())
 }
 
 /// 파일을 삭제 표시하고 version을 올린다. 이미 삭제 표시된 파일은 건드리지 않는다.
+/// 상대가 지우라고 해서 지운 것이면(`path`의 sync_pending 기록이 삭제) 상대의 version을 그대로 쓴다.
 ///
 /// 이미 삭제된 파일의 version을 또 올리면 폴더 이벤트가 올 때마다 삭제 기록이 앞서 나간다.
 /// 반환값은 해당 행이 있었는지다.
 fn mark_deleted(
     tx: &rfsync_storage::Transaction<'_>,
+    root_id: i64,
+    path: &str,
     file: &File,
     me: DeviceId,
 ) -> Result<bool, EngineError> {
+    // 이미 삭제 표시된 파일이어도 남은 기록은 지운다.
+    let pending = rfsync_storage::take_sync_pending(tx, root_id, path)?;
     if file.deleted {
         return Ok(true);
     }
-    let version = deleted_file_version(file, me)?;
+    let version = deleted_file_version(file, pending.as_ref(), me)?;
     Ok(rfsync_storage::mark_file_deleted(tx, file.id, &version)?)
 }
 
