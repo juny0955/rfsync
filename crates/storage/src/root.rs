@@ -93,7 +93,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn marks_only_selected_root_as_having_snapshot() -> Result<(), Box<dyn Error>> {
+    fn 선택한_루트만_스냅샷이_있다고_표시한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let other_id = insert_root(&conn, "/other")?;
@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_false_when_marking_missing_root() -> Result<(), Box<dyn Error>> {
+    fn 없는_루트를_표시하면_거짓을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         assert!(!mark_root_has_snapshot(&conn, 42)?);
@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn rolls_back_snapshot_marker_with_transaction() -> Result<(), Box<dyn Error>> {
+    fn 스냅샷_표시를_트랜잭션으로_되돌린다() -> Result<(), Box<dyn Error>> {
         let mut conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
 
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn inserts_multiple_roots_with_distinct_ids_and_no_snapshots() -> Result<(), Box<dyn Error>> {
+    fn 여러_루트를_서로_다른_ID로_스냅샷_없이_추가한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         let first_id = insert_root(&conn, "/first")?;
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_root_without_changing_existing_entry() -> Result<(), Box<dyn Error>> {
+    fn 중복_루트는_기존_항목을_바꾸지_않고_거부한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
 
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_existing_root_with_snapshot() -> Result<(), Box<dyn Error>> {
+    fn 스냅샷이_있는_기존_루트를_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         conn.execute("UPDATE roots SET has_snapshot = 1 WHERE id = ?1", [root_id])?;
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_registered_roots_by_exact_path() -> Result<(), Box<dyn Error>> {
+    fn 정확한_경로로_등록된_루트를_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let first_id = insert_root(&conn, "/example")?;
         let second_id = insert_root(&conn, "/example-other")?;
@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_unregistered_root_path() -> Result<(), Box<dyn Error>> {
+    fn 등록되지_않은_루트_경로는_없음을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         insert_root(&conn, "/example")?;
 
@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_missing_root() -> Result<(), Box<dyn Error>> {
+    fn 없는_루트는_없음을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         let root = get_root(&conn, 42)?;
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_no_roots_in_an_empty_database() -> Result<(), Box<dyn Error>> {
+    fn 빈_데이터베이스에서는_루트가_없다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         assert!(list_roots(&conn)?.is_empty());
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_the_registered_root() -> Result<(), Box<dyn Error>> {
+    fn 등록된_루트를_나열한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
 
@@ -252,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_every_registered_root() -> Result<(), Box<dyn Error>> {
+    fn 등록된_모든_루트를_나열한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         insert_root(&conn, "/a")?;
         insert_root(&conn, "/b")?;

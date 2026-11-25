@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn put_then_take_returns_the_row_and_removes_it() -> Result<(), Box<dyn Error>> {
+    fn 넣은_행을_꺼내면_반환하고_삭제한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let row = pending("docs/a.txt", "a", false, &[1, 2, 3]);
@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn put_overwrites_existing_row_for_same_path() -> Result<(), Box<dyn Error>> {
+    fn 같은_경로에_넣으면_기존_행을_덮어쓴다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         put_sync_pending(&conn, root_id, &pending("a.txt", "a", false, &[1]))?;
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_only_the_given_path() -> Result<(), Box<dyn Error>> {
+    fn 지정한_경로의_행만_삭제한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let other_root = insert_root(&conn, "/other")?;

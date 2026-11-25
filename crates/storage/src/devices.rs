@@ -71,7 +71,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lists_no_devices_when_none_are_paired() -> Result<(), StorageError> {
+    fn 페어링된_기기가_없으면_빈_목록을_반환한다() -> Result<(), StorageError> {
         let conn = open(Path::new(":memory:"))?;
 
         assert_eq!(list_devices(&conn)?, Vec::new());
@@ -79,7 +79,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_every_column_of_paired_devices_in_pairing_order() -> Result<(), StorageError> {
+    fn 페어링된_기기의_모든_열을_페어링_순서대로_나열한다() -> Result<(), StorageError> {
         let conn = open(Path::new(":memory:"))?;
         let listener_id = upsert_device(&conn, b"listener side", None, 100)?;
         let dialer_id = upsert_device(&conn, b"dialer side", Some("192.0.2.1:10000"), 200)?;
@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn stores_new_device_without_endpoint() -> Result<(), StorageError> {
+    fn 엔드포인트_없이_새_기기를_저장한다() -> Result<(), StorageError> {
         let conn = open(Path::new(":memory:"))?;
         let cert_der = b"device certificate";
 
@@ -129,8 +129,8 @@ mod tests {
     }
 
     #[test]
-    fn repairing_keeps_device_identity_and_updates_only_known_endpoints() -> Result<(), StorageError>
-    {
+    fn 다시_페어링하면_기기_신원은_유지하고_알려진_엔드포인트만_갱신한다()
+    -> Result<(), StorageError> {
         let conn = open(Path::new(":memory:"))?;
         let cert_der = b"device certificate";
         let id = upsert_device(&conn, cert_der, Some("192.0.2.1:10000"), 100)?;

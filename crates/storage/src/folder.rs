@@ -108,7 +108,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn gets_only_target_folder_and_descendants_in_selected_root() -> Result<(), Box<dyn Error>> {
+    fn 선택한_루트에서_대상_폴더와_하위_폴더만_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/first")?;
         let other_root = insert_root(&conn, "/second")?;
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn treats_special_characters_in_folder_paths_literally() -> Result<(), Box<dyn Error>> {
+    fn 폴더_경로의_특수문자를_그대로_취급한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         insert_folder(&conn, root_id, "문서%_")?;
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_folder_by_path_in_selected_root() -> Result<(), Box<dyn Error>> {
+    fn 선택한_루트에서_경로로_폴더를_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let first_root = insert_root(&conn, "/first")?;
         let second_root = insert_root(&conn, "/second")?;
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn deletes_folder_and_its_files_but_keeps_other_folders() -> Result<(), Box<dyn Error>> {
+    fn 폴더와_그_파일은_삭제하고_다른_폴더는_남겨둔다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "photos")?;
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_false_when_folder_does_not_exist() -> Result<(), Box<dyn Error>> {
+    fn 폴더가_없으면_거짓을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         assert!(!delete_folder_by_id(&conn, 42)?);
@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn rolls_back_folder_deletion() -> Result<(), Box<dyn Error>> {
+    fn 폴더_삭제를_트랜잭션으로_되돌린다() -> Result<(), Box<dyn Error>> {
         let mut conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "photos")?;
@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_only_folders_for_the_selected_root() -> Result<(), Box<dyn Error>> {
+    fn 선택한_루트의_폴더만_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let other_root_id = insert_root(&conn, "/other")?;
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_folders_with_their_root_and_relative_path() -> Result<(), Box<dyn Error>> {
+    fn 루트와_상대_경로를_함께_폴더로_저장한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let other_root_id = insert_root(&conn, "/other")?;
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_folder_in_same_root() -> Result<(), Box<dyn Error>> {
+    fn 같은_루트의_중복_폴더는_거부한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         insert_folder(&conn, root_id, "photos")?;
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_folder_for_missing_root() -> Result<(), Box<dyn Error>> {
+    fn 없는_루트의_폴더는_거부한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         let result = insert_folder(&conn, 42, "photos");
@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn rolls_back_folder_with_transaction() -> Result<(), Box<dyn Error>> {
+    fn 폴더_저장을_트랜잭션으로_되돌린다() -> Result<(), Box<dyn Error>> {
         let mut conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
 

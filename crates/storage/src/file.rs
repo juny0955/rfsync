@@ -249,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_file_by_folder_and_name_in_selected_root() -> Result<(), Box<dyn Error>> {
+    fn 선택한_루트에서_폴더와_이름으로_파일을_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let first_root = insert_root(&conn, "/first")?;
         let second_root = insert_root(&conn, "/second")?;
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_when_file_folder_or_root_is_missing() -> Result<(), Box<dyn Error>> {
+    fn 파일이나_폴더나_루트가_없으면_없음을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root = insert_root(&conn, "/example")?;
         let folder = insert_folder(&conn, root, "")?;
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn stores_and_updates_version_bytes() -> Result<(), Box<dyn Error>> {
+    fn 버전_바이트를_저장하고_갱신한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn updates_selected_file() -> Result<(), Box<dyn Error>> {
+    fn 선택한_파일을_갱신한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -373,14 +373,14 @@ mod tests {
     }
 
     #[test]
-    fn update_returns_false_when_file_does_not_exist() -> Result<(), Box<dyn Error>> {
+    fn 갱신할_파일이_없으면_거짓을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         assert!(!update_file(&conn, sample_file(42))?);
         Ok(())
     }
 
     #[test]
-    fn update_rejects_missing_folder_without_changing_file() -> Result<(), Box<dyn Error>> {
+    fn 없는_폴더로_갱신하면_파일을_바꾸지_않고_거부한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -404,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn rolls_back_file_update() -> Result<(), Box<dyn Error>> {
+    fn 파일_갱신을_트랜잭션으로_되돌린다() -> Result<(), Box<dyn Error>> {
         let mut conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -423,8 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn marks_only_selected_file_as_deleted_and_updates_only_its_version()
-    -> Result<(), Box<dyn Error>> {
+    fn 선택한_파일만_삭제로_표시하고_그_버전만_갱신한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -455,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn deletes_only_selected_file() -> Result<(), Box<dyn Error>> {
+    fn 선택한_파일만_삭제한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -473,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_false_when_file_does_not_exist() -> Result<(), Box<dyn Error>> {
+    fn 파일이_없으면_거짓을_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         assert!(!delete_file_by_id(&conn, 42)?);
@@ -481,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn rolls_back_file_deletion() -> Result<(), Box<dyn Error>> {
+    fn 파일_삭제를_트랜잭션으로_되돌린다() -> Result<(), Box<dyn Error>> {
         let mut conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -498,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_files_only_for_selected_root() -> Result<(), Box<dyn Error>> {
+    fn 선택한_루트의_파일만_조회한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let other_root_id = insert_root(&conn, "/other")?;
@@ -537,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn inserts_file_with_metadata_and_returns_id() -> Result<(), Box<dyn Error>> {
+    fn 메타데이터와_함께_파일을_추가하고_ID를_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -565,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_file_for_missing_folder() -> Result<(), Box<dyn Error>> {
+    fn 없는_폴더의_파일은_거부한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
         let result = insert_file(&conn, &sample_file(42));
@@ -577,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_file_in_same_folder() -> Result<(), Box<dyn Error>> {
+    fn 같은_폴더의_중복_파일은_거부한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root_id = insert_root(&conn, "/example")?;
         let folder_id = insert_folder(&conn, root_id, "")?;
@@ -593,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_file_only_for_matching_root_folder_and_name() -> Result<(), Box<dyn Error>> {
+    fn 루트와_폴더와_이름이_모두_일치하는_파일만_찾는다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root = insert_root(&conn, "/first")?;
         let other_root = insert_root(&conn, "/second")?;
@@ -645,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_files_only_from_requested_folders() -> Result<(), Box<dyn Error>> {
+    fn 요청한_폴더의_파일만_반환한다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root = insert_root(&conn, "/first")?;
         let other_root = insert_root(&conn, "/second")?;
@@ -693,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_no_files_for_empty_or_missing_folder_ids() -> Result<(), Box<dyn Error>> {
+    fn 폴더_ID가_비었거나_없으면_파일을_반환하지_않는다() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
         let root = insert_root(&conn, "/first")?;
         let folder = insert_folder(&conn, root, "first")?;
