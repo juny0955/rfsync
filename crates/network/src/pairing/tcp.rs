@@ -82,8 +82,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn messages_remain_separate_when_sent_over_one_connection() -> Result<(), Box<dyn Error>>
-    {
+    async fn 한_연결로_보낸_메시지는_서로_구분된다() -> Result<(), Box<dyn Error>> {
         let (mut sender, mut receiver) = connected_streams().await?;
         let largest = vec![0xa5; 4096];
         let messages: [&[u8]; 4] = [b"hello", b"", b"world\0", &largest];
@@ -102,7 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sending_rejects_a_message_larger_than_the_limit() -> Result<(), Box<dyn Error>> {
+    async fn 제한보다_큰_메시지는_보내기를_거부한다() -> Result<(), Box<dyn Error>> {
         let (mut sender, _receiver) = connected_streams().await?;
 
         let error = send_message(&mut sender, &[0; 4097]).await.unwrap_err();
@@ -118,8 +117,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receiving_rejects_an_oversized_length_before_reading_the_body()
-    -> Result<(), Box<dyn Error>> {
+    async fn 본문을_읽기_전에_과도한_길이는_받기를_거부한다() -> Result<(), Box<dyn Error>> {
         let (mut sender, mut receiver) = connected_streams().await?;
         sender.write_u16(4097).await?;
 
@@ -138,7 +136,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receiving_reports_eof_when_the_body_is_truncated() -> Result<(), Box<dyn Error>> {
+    async fn 본문이_잘리면_받기에서_eof를_보고한다() -> Result<(), Box<dyn Error>> {
         let (mut sender, mut receiver) = connected_streams().await?;
         sender.write_u16(3).await?;
         sender.write_all(b"hi").await?;

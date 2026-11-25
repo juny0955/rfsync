@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keep_alive_holds_idle_connection_open() -> Result<(), Box<dyn Error>> {
+    async fn 킵얼라이브가_있으면_유휴_연결을_계속_유지한다() -> Result<(), Box<dyn Error>> {
         let (_server_endpoint, server, _client_endpoint, client) =
             connected_pair_with(|| transport_config(Duration::from_millis(200), 1_000)).await?;
 
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_connection_times_out_without_keep_alive() -> Result<(), Box<dyn Error>> {
+    async fn 킵얼라이브가_없으면_유휴_연결이_타임아웃된다() -> Result<(), Box<dyn Error>> {
         let (_server_endpoint, _server, _client_endpoint, client) = connected_pair_with(|| {
             let mut transport = TransportConfig::default();
             transport.max_idle_timeout(Some(VarInt::from_u32(1_000).into()));
@@ -268,7 +268,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paired_peers_exchange_data_over_quic() -> Result<(), Box<dyn Error>> {
+    async fn 페어링된_피어끼리_quic으로_데이터를_주고받는다() -> Result<(), Box<dyn Error>> {
         let client_identity = generate_certificate(CLIENT_NAME)?;
         let trusted_client = client_identity.0.clone();
         let ((_server_endpoint, server), (_client_endpoint, client)) =
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn opened_stream_is_accepted_and_carries_both_directions() -> Result<(), Box<dyn Error>> {
+    async fn 연_스트림은_수락되고_양방향으로_데이터를_나른다() -> Result<(), Box<dyn Error>> {
         let client_identity = generate_certificate(CLIENT_NAME)?;
         let trusted_client = client_identity.0.clone();
         let ((_server_endpoint, server), (_client_endpoint, client)) =
@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn each_opened_stream_is_a_separate_conversation() -> Result<(), Box<dyn Error>> {
+    async fn 열린_스트림마다_별개의_대화다() -> Result<(), Box<dyn Error>> {
         let client_identity = generate_certificate(CLIENT_NAME)?;
         let trusted_client = client_identity.0.clone();
         let ((_server_endpoint, server), (_client_endpoint, client)) =
@@ -340,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn same_endpoint_accepts_new_peer_while_connected_to_first_peer()
+    async fn 첫_피어와_연결된_동안에도_같은_엔드포인트가_새_피어를_받는다()
     -> Result<(), Box<dyn Error>> {
         let (a_cert, a_key) = generate_certificate("a.local")?;
         let (b_cert, b_key) = generate_certificate("b.local")?;
@@ -380,7 +380,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_rejects_unpaired_client_certificate() -> Result<(), Box<dyn Error>> {
+    async fn 서버는_페어링되지_않은_클라이언트_인증서를_거부한다() -> Result<(), Box<dyn Error>> {
         let (trusted_client, _) = generate_certificate(CLIENT_NAME)?;
         let unpaired_client = generate_certificate(CLIENT_NAME)?;
         let ((_server_endpoint, server), _client) =

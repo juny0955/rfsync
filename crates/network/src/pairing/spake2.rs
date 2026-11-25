@@ -67,7 +67,7 @@ mod tests {
     use std::error::Error;
 
     #[test]
-    fn confirms_both_peers_when_codes_match() -> Result<(), Box<dyn Error>> {
+    fn 코드가_일치하면_양쪽_피어를_확정한다() -> Result<(), Box<dyn Error>> {
         let (message_a, state_a) = start_a("00123456")?;
         let (message_b, state_b) = start_b("00123456")?;
 
@@ -81,7 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_both_confirmations_when_codes_differ() -> Result<(), Box<dyn Error>> {
+    fn 코드가_다르면_양쪽_확인을_모두_거부한다() -> Result<(), Box<dyn Error>> {
         let (message_a, state_a) = start_a("00123456")?;
         let (message_b, state_b) = start_b("00123457")?;
 
