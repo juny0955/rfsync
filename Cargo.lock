@@ -1239,6 +1239,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rfsync-ipc"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "rfsync-ipc",
+ "serde",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "rfsync-network"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,19 @@
+[package]
+name = "rfsync-ipc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde = { version = "1.0.229", features = [ "derive" ] }
+postcard = { version = "1.2.0", features = [ "use-std" ] }
+tokio = { version = "1.54.1", features = ["io-util"], optional = true }
+
+[features]
+# 데몬이 쓰는 tokio 기반 읽기·쓰기. CLI는 켜지 않아 tokio를 끌어오지 않는다.
+async = ["dep:tokio"]
+
+[dev-dependencies]
+# 자기 자신을 `async` 기능과 함께 불러와, 이 크레이트만 시험해도 비동기 테스트가 돈다.
+rfsync-ipc = { path = ".", features = ["async"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "rt"] }
