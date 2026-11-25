@@ -127,7 +127,7 @@ mod tests {
     const DB_PATH: &str = "pairing.db";
 
     #[tokio::test]
-    async fn pairs_on_separate_ports_and_stores_each_remote_device() -> Result<(), Box<dyn Error>> {
+    async fn 서로_다른_포트에서_페어링하고_상대_기기를_각각_저장한다() -> Result<(), Box<dyn Error>> {
         let listener_dir = tempfile::tempdir()?;
         let dialer_dir = tempfile::tempdir()?;
 
@@ -215,7 +215,7 @@ mod tests {
                 "--ignored",
                 "--exact",
                 "--nocapture",
-                "peer::pairing::tests::run_peer",
+                "peer::pairing::tests::피어_실행",
             ])
             .env("RFSYNC_TEST_PAIR_PORT", port.to_string())
             .env_remove("RFSYNC_TEST_PEER_ADDR");
@@ -232,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "launched in an isolated working directory by the pairing test"]
-    async fn run_peer() -> Result<(), Box<dyn Error>> {
+    async fn 피어_실행() -> Result<(), Box<dyn Error>> {
         let Ok(port) = env::var("RFSYNC_TEST_PAIR_PORT") else {
             return Ok(());
         };
@@ -246,7 +246,7 @@ mod tests {
                     Err(EngineError::Network(NetworkError::Io(error)))
                         if error.kind() == io::ErrorKind::ConnectionRefused =>
                     {
-                        // The listener prints its code just before binding TCP.
+                        // 리스너는 TCP를 바인드하기 직전에 코드를 출력하므로 아직 접속이 거절될 수 있다. 양보하고 다시 시도한다.
                         tokio::task::yield_now().await;
                     }
                     result => {

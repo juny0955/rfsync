@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exchange_certificate_returns_each_peers_der() -> Result<(), Box<dyn Error>> {
+    async fn 각_피어의_인증서_der을_주고받는다() -> Result<(), Box<dyn Error>> {
         let (mut a, mut b) = duplex(8192);
         let (a_der, _) = generate_certificate("a.local")?;
         let (b_der, _) = generate_certificate("b.local")?;
@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exchange_certificate_rejects_modified_der() -> Result<(), Box<dyn Error>> {
+    async fn 변조된_인증서_der은_거부한다() -> Result<(), Box<dyn Error>> {
         let (mut a, mut relay_a) = duplex(8192);
         let (mut b, mut relay_b) = duplex(8192);
         let (a_der, _) = generate_certificate("a.local")?;
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_pairing_confirms_both_peers_when_codes_match() -> Result<(), Box<dyn Error>> {
+    async fn 코드가_일치하면_양쪽_피어_모두_페어링을_확정한다() -> Result<(), Box<dyn Error>> {
         let (server_certificate, _) = generate_certificate("a.local")?;
         let (client_certificate, _) = generate_certificate("b.local")?;
         let (server, client) = exchange_with_client(
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_pairing_rejects_both_peers_when_codes_differ() -> Result<(), Box<dyn Error>> {
+    async fn 코드가_다르면_양쪽_피어_모두_페어링을_거부한다() -> Result<(), Box<dyn Error>> {
         let (server_certificate, _) = generate_certificate("a.local")?;
         let (client_certificate, _) = generate_certificate("b.local")?;
         let (server, client) = exchange_with_client(
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_code_contains_eight_ascii_digits() {
+    fn 페어링_코드는_8자리_아스키_숫자로_이루어진다() {
         let code = generate_pairing_code();
 
         assert_eq!(code.len(), 8);
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn listen_pairing_reports_an_address_that_is_already_in_use() -> Result<(), Box<dyn Error>>
+    async fn 이미_사용_중인_주소로_페어링을_대기하면_오류를_보고한다() -> Result<(), Box<dyn Error>>
     {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;

@@ -1,7 +1,7 @@
 use std::{error::Error, fs, process::Command, time::SystemTime};
 
 #[test]
-fn add_fails_with_a_hint_when_the_daemon_is_not_running() -> Result<(), Box<dyn Error>> {
+fn 데몬이_실행_중이_아니면_add는_안내와_함께_실패한다() -> Result<(), Box<dyn Error>> {
     let dir = std::env::temp_dir().join(format!(
         "rfsync-cli-{}-{}",
         std::process::id(),
@@ -24,7 +24,7 @@ fn add_fails_with_a_hint_when_the_daemon_is_not_running() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn add_fails_when_the_path_does_not_exist() -> Result<(), Box<dyn Error>> {
+fn 경로가_없으면_add는_실패한다() -> Result<(), Box<dyn Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_rfsync"))
         .current_dir(std::env::temp_dir())
         .args(["add", "rfsync-no-such-folder"])
@@ -36,7 +36,7 @@ fn add_fails_when_the_path_does_not_exist() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn help_succeeds_and_missing_argument_fails() -> Result<(), Box<dyn Error>> {
+fn help는_성공하고_인자가_빠지면_실패한다() -> Result<(), Box<dyn Error>> {
     let binary = env!("CARGO_BIN_EXE_rfsync");
     assert!(
         Command::new(binary)

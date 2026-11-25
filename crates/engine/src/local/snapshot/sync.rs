@@ -26,13 +26,11 @@ pub fn sync_directory(
 ) -> Result<(), EngineError> {
     let mut entries = rfsync_fs::scan(&root_path.join(target))?;
 
-    // 하위 폴더 평면화
     for entry in &mut entries {
         entry.path = target.join(&entry.path);
     }
     entries.push(entry);
 
-    // 해당 폴더가 이전 파일이였다면 제거
     let (parent_path, name) = split_parent_and_name(target_path);
 
     if let Some(file) = rfsync_storage::get_file_by_folder_and_name(tx, root_id, parent_path, name)?

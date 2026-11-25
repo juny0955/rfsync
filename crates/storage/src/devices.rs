@@ -15,14 +15,14 @@ pub struct Device {
     pub paired_at: i64,
 }
 
-/// Stores a device by certificate DER and returns its ID.
+/// 인증서(DER)로 기기를 저장하고 ID를 반환한다.
 ///
-/// `paired_at` is the first pairing time in Unix seconds. For an existing
-/// device, a supplied endpoint replaces the stored one and `None` preserves it.
+/// `paired_at`은 처음 페어링한 시각(Unix 초)이다. 이미 있는 기기라면 endpoint를 주었을 때만
+/// 저장된 값을 바꾸고, `None`이면 기존 값을 유지한다.
 ///
 /// # Errors
 ///
-/// Returns [`StorageError::Sqlite`] if the database write fails.
+/// 데이터베이스 쓰기에 실패하면 [`StorageError::Sqlite`]를 반환한다.
 pub fn upsert_device(
     conn: &Connection,
     cert_der: &[u8],
@@ -63,93 +63,4 @@ pub fn list_devices(conn: &Connection) -> Result<Vec<Device>, StorageError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use crate::open;
-
-    use super::*;
-
-    #[test]
-    fn lists_no_devices_when_none_are_paired() -> Result<(), StorageError> {
-        let conn = open(Path::new(":memory:"))?;
-
-        assert_eq!(list_devices(&conn)?, Vec::new());
-        Ok(())
-    }
-
-    #[test]
-    fn lists_every_column_of_paired_devices_in_pairing_order() -> Result<(), StorageError> {
-        let conn = open(Path::new(":memory:"))?;
-        let listener_id = upsert_device(&conn, b"listener side", None, 100)?;
-        let dialer_id = upsert_device(&conn, b"dialer side", Some("192.0.2.1:10000"), 200)?;
-        conn.execute(
-            "UPDATE devices SET name = 'Laptop' WHERE id = ?1",
-            [dialer_id],
-        )?;
-        // 재페어링은 endpoint만 갱신하고 paired_at은 처음 값을 유지한다.
-        upsert_device(&conn, b"listener side", Some("192.0.2.9:10000"), 300)?;
-
-        assert_eq!(
-            list_devices(&conn)?,
-            vec![
-                Device {
-                    id: listener_id,
-                    cert_der: b"listener side".to_vec(),
-                    name: None,
-                    endpoint: Some("192.0.2.9:10000".to_owned()),
-                    paired_at: 100,
-                },
-                Device {
-                    id: dialer_id,
-                    cert_der: b"dialer side".to_vec(),
-                    name: Some("Laptop".to_owned()),
-                    endpoint: Some("192.0.2.1:10000".to_owned()),
-                    paired_at: 200,
-                },
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn stores_new_device_without_endpoint() -> Result<(), StorageError> {
-        let conn = open(Path::new(":memory:"))?;
-        let cert_der = b"device certificate";
-
-        let id = upsert_device(&conn, cert_der, None, 100)?;
-
-        let stored: (Vec<u8>, Option<String>, Option<String>, i64) = conn.query_row(
-            "SELECT cert_der, name, endpoint, paired_at FROM devices WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )?;
-        assert_eq!(stored, (cert_der.to_vec(), None, None, 100));
-        Ok(())
-    }
-
-    #[test]
-    fn repairing_keeps_device_identity_and_updates_only_known_endpoints() -> Result<(), StorageError>
-    {
-        let conn = open(Path::new(":memory:"))?;
-        let cert_der = b"device certificate";
-        let id = upsert_device(&conn, cert_der, Some("192.0.2.1:10000"), 100)?;
-        conn.execute("UPDATE devices SET name = 'Laptop' WHERE id = ?1", [id])?;
-
-        for (endpoint, expected) in [
-            (Some("192.0.2.2:10000"), "192.0.2.2:10000"),
-            (None, "192.0.2.2:10000"),
-        ] {
-            assert_eq!(upsert_device(&conn, cert_der, endpoint, 200)?, id);
-            let (name, stored_endpoint, paired_at): (String, String, i64) = conn.query_row(
-                "SELECT name, endpoint, paired_at FROM devices WHERE id = ?1",
-                [id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-            assert_eq!(name, "Laptop");
-            assert_eq!(stored_endpoint, expected);
-            assert_eq!(paired_at, 100);
-        }
-        Ok(())
-    }
-}
+mod tests;

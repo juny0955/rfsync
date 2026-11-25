@@ -57,7 +57,7 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
-    fn forwards_both_paths_for_rename() {
+    fn 이름_변경은_두_경로를_모두_전달한다() {
         let (tx, rx) = mpsc::channel();
         let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
             .add_path("old".into())
@@ -75,7 +75,7 @@ mod tests {
     }
 
     #[test]
-    fn requests_rescan_when_events_may_be_missing() {
+    fn 이벤트가_누락됐을_수_있으면_재스캔을_요청한다() {
         let (tx, rx) = mpsc::channel();
         let event = Event::new(EventKind::Any).set_flag(Flag::Rescan);
 
@@ -85,14 +85,14 @@ mod tests {
     }
 
     #[test]
-    fn requests_rescan_when_path_is_unknown() {
+    fn 경로를_알_수_없으면_재스캔을_요청한다() {
         let (tx, rx) = mpsc::channel();
         forward_event(&tx, Ok(Event::new(EventKind::Any))).unwrap();
         assert!(matches!(rx.try_recv().unwrap(), Ok(FsEvent::Rescan)));
     }
 
     #[test]
-    fn ignores_access_events() {
+    fn 접근_이벤트는_무시한다() {
         let (tx, rx) = mpsc::channel();
         let event = Event::new(EventKind::Access(AccessKind::Read)).add_path("file".into());
         forward_event(&tx, Ok(event)).unwrap();
@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn forwards_watcher_errors() {
+    fn 감시기_에러를_전달한다() {
         let (tx, rx) = mpsc::channel();
         forward_event(&tx, Err(notify::Error::generic("watch failed"))).unwrap();
         assert!(matches!(rx.try_recv().unwrap(), Err(FsError::Watch(_))));

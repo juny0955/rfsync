@@ -185,7 +185,7 @@ fn expected(files: &[(&str, &[u8])]) -> BTreeMap<String, Vec<u8>> {
 }
 
 #[tokio::test]
-async fn each_node_receives_the_files_it_is_missing_from_the_other() -> Result<(), Box<dyn Error>> {
+async fn 각_노드는_없는_파일을_상대에게서_받는다() -> Result<(), Box<dyn Error>> {
     let big = big_content();
     let a_files: [(&str, &[u8]); 3] = [
         ("a.txt", b"hello"),
@@ -235,7 +235,7 @@ async fn each_node_receives_the_files_it_is_missing_from_the_other() -> Result<(
 /// 6단계의 출발점. 연결된 뒤에 생긴 파일이 상대에게 전달되는지 확인한다.
 /// 지금은 시작 시점의 목록만 보내므로 실패하는 것이 정상이다.
 #[tokio::test]
-async fn a_file_created_after_connecting_reaches_the_other_node() -> Result<(), Box<dyn Error>> {
+async fn 연결_후_만든_파일은_상대_노드에_전달된다() -> Result<(), Box<dyn Error>> {
     let a = Node::new(&[("first.txt", b"first")])?;
     let b = Node::new(&[])?;
     pair(&b, &a)?;
@@ -267,7 +267,7 @@ async fn a_file_created_after_connecting_reaches_the_other_node() -> Result<(), 
 /// 같은 경로를 따로 등록해 내용이 다르면 동시에 고친 것이다. 수정시각이 최신인 쪽이 이기고,
 /// 진 쪽의 내용은 `.sync-conflict-*` 파일로 남아 양쪽에 모두 있어야 한다.
 #[tokio::test]
-async fn files_with_different_content_on_both_sides_keep_both_contents()
+async fn 양쪽의_내용이_다른_파일은_두_내용을_모두_보존한다()
 -> Result<(), Box<dyn Error>> {
     let a = Node::new(&[("x.txt", b"A-version"), ("only-a.txt", b"hello")])?;
     // b의 x.txt가 더 늦게 만들어져 수정시각이 최신이다.
@@ -314,7 +314,7 @@ async fn files_with_different_content_on_both_sides_keep_both_contents()
 }
 
 #[tokio::test]
-async fn nothing_is_transferred_when_both_nodes_already_have_the_same_files()
+async fn 두_노드가_이미_같은_파일을_가졌으면_아무것도_전송하지_않는다()
 -> Result<(), Box<dyn Error>> {
     let files: [(&str, &[u8]); 2] = [("a.txt", b"hello"), ("sub/b.txt", b"world")];
     let a = Node::new(&files)?;
@@ -334,7 +334,7 @@ async fn nothing_is_transferred_when_both_nodes_already_have_the_same_files()
 
 /// 연결된 동안 한쪽이 파일을 지우면 상대에서도 지워진다.
 #[tokio::test]
-async fn a_file_deleted_while_connected_is_deleted_on_the_other_node() -> Result<(), Box<dyn Error>>
+async fn 연결_중_삭제한_파일은_상대_노드에서도_삭제된다() -> Result<(), Box<dyn Error>>
 {
     let shared: [(&str, &[u8]); 2] = [("keep.txt", b"keep"), ("doomed.txt", b"doomed")];
     let a = Node::new(&shared)?;
@@ -395,7 +395,7 @@ async fn a_file_deleted_while_connected_is_deleted_on_the_other_node() -> Result
 }
 
 #[tokio::test]
-async fn a_file_edited_while_connected_overwrites_the_other_node() -> Result<(), Box<dyn Error>> {
+async fn 연결_중_수정한_파일은_상대_노드를_덮어쓴다() -> Result<(), Box<dyn Error>> {
     let shared: [(&str, &[u8]); 1] = [("note.txt", b"original")];
     let a = Node::new(&shared)?;
     let b = Node::new(&shared)?;
@@ -436,7 +436,7 @@ async fn a_file_edited_while_connected_overwrites_the_other_node() -> Result<(),
 /// 오래된 목록이라, 꺼져 있는 동안의 변경은 다음 변경 신호가 올 때까지 상대에게 알려지지 않는다.
 #[tokio::test]
 #[ignore = "시작 시점의 오래된 목록 문제: 꺼져 있는 동안의 변경이 전달되지 않는다"]
-async fn a_file_edited_on_the_other_node_survives_a_deletion() -> Result<(), Box<dyn Error>> {
+async fn 상대_노드에서_수정한_파일은_삭제되어도_살아남는다() -> Result<(), Box<dyn Error>> {
     let shared: [(&str, &[u8]); 1] = [("note.txt", b"original")];
     let a = Node::new(&shared)?;
     let b = Node::new(&shared)?;
