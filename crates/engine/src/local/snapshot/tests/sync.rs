@@ -615,8 +615,8 @@ fn editing_a_received_file_again_merges_the_peers_history_and_raises_mine()
 }
 
 #[test]
-fn a_pending_record_that_does_not_match_the_content_is_merged_not_adopted()
--> Result<(), Box<dyn Error>> {
+fn a_pending_record_that_does_not_match_the_content_is_left_in_place() -> Result<(), Box<dyn Error>>
+{
     let f = Fixture::new()?;
     fs::write(f.root.join("memo"), b"one")?;
     create_initial_snapshot_for_test(f.root_id, &f.db)?;
@@ -626,10 +626,24 @@ fn a_pending_record_that_does_not_match_the_content_is_merged_not_adopted()
 
     sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
 
-    let mut expected = my_version(2);
-    expected.merge(&peer_version(1));
-    assert_eq!(stored_version(&f, "", "memo")?, expected);
-    assert!(!pending_left(&f, "memo")?);
+    // 내 수정으로만 기록하고, 받는 중일 수 있는 기록은 소비하지 않고 남긴다.
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+    assert!(pending_left(&f, "memo")?);
+    Ok(())
+}
+
+#[test]
+fn a_delete_event_does_not_consume_a_pending_record_for_content() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    // 받는 도중 옛 파일이 지워지는 이벤트가 먼저 와도, 내용을 받는 기록은 남아야 한다.
+    fs::remove_file(f.root.join("memo"))?;
+    put_pending(&f, "memo", b"incoming", false, &peer_version(1))?;
+
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    assert!(pending_left(&f, "memo")?);
     Ok(())
 }
 

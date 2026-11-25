@@ -11,7 +11,7 @@ use crate::{
     NetworkError,
     pairing::{
         spake2::{PartyState, start_a, start_b},
-        tcp::{bind_tcp, connect_tcp, receive_message, send_message},
+        tcp::{accept_tcp, bind_tcp, connect_tcp, receive_message, send_message},
     },
 };
 
@@ -21,18 +21,42 @@ mod tcp;
 const A_TO_B: &[u8] = b"rfsync/v1/cert/A-to-B";
 const B_TO_A: &[u8] = b"rfsync/v1/cert/B-to-A";
 
+/// 페어링 접속을 받을 자리를 잡아 둔 리스너. 코드를 사용자에게 알리기 전에 먼저 바인드해 두기 위해 쓴다.
+pub struct PairingListener {
+    listener: tokio::net::TcpListener,
+}
+
+pub async fn bind_pairing(addr: SocketAddr) -> Result<PairingListener, NetworkError> {
+    Ok(PairingListener {
+        listener: bind_tcp(addr).await?,
+    })
+}
+
+impl PairingListener {
+    pub async fn accept(self, code: &str, certificate: &[u8]) -> Result<Vec<u8>, NetworkError> {
+        let mut stream = accept_tcp(&self.listener).await?;
+        pair_as_listener(&mut stream, code, certificate).await
+    }
+}
+
 pub async fn listen_pairing(
     addr: SocketAddr,
     code: &str,
     certificate: &[u8],
 ) -> Result<Vec<u8>, NetworkError> {
-    let mut stream = bind_tcp(addr).await?;
+    bind_pairing(addr).await?.accept(code, certificate).await
+}
 
+async fn pair_as_listener(
+    stream: &mut tokio::net::TcpStream,
+    code: &str,
+    certificate: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
     let (message, state) = start_a(code)?;
-    let output = verify_spake2(&mut stream, &message, state).await?;
+    let output = verify_spake2(stream, &message, state).await?;
 
     let peer_cert = exchange_certificate(
-        &mut stream,
+        stream,
         certificate,
         output.session_key.as_bytes(),
         A_TO_B,

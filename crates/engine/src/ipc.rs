@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     error::EngineError,
-    peer::{pair_connect, pair_listen},
+    peer::{bind_pair_listener, pair_connect, pair_listen},
 };
 
 /// 연결을 받지 못했을 때 다시 시도하기 전에 쉬는 시간. 파일 디스크립터가 모자란 경우 등에 바쁜 반복을 막는다.
@@ -168,11 +168,16 @@ fn paired(context: &IpcContext) -> Response {
 /// 코드를 먼저 보내고, 상대가 접속해 페어링을 마치면 결과를 보낸다.
 /// 기다리는 동안 CLI가 연결을 끊으면(예: Ctrl-C) 기다리기를 그만둔다.
 async fn pair_listen_request(mut stream: UnixStream, context: &IpcContext) -> Result<(), IpcError> {
+    // 코드를 알리기 전에 접속 받을 자리부터 잡는다. 상대가 코드를 받자마자 접속해도 놓치지 않는다.
+    let listener = match bind_pair_listener(context.port).await {
+        Ok(listener) => listener,
+        Err(e) => return write_frame_async(&mut stream, &Response::Error(e.to_string())).await,
+    };
     let code = rfsync_network::generate_pairing_code();
     write_frame_async(&mut stream, &Response::PairingCode(code.clone())).await?;
 
     let (mut reader, mut writer) = stream.split();
-    let pairing = pair_listen(context.port, &context.cert, &code, &context.db_path);
+    let pairing = pair_listen(listener, &context.cert, &code, &context.db_path);
     let mut hangup = [0u8; 1];
     let response = tokio::select! {
         result = pairing => match result {
@@ -343,8 +348,6 @@ mod tests {
         let Response::PairingCode(code) = read_frame_async(&mut listening).await.unwrap() else {
             panic!("코드가 먼저 와야 합니다");
         };
-        // 코드를 받았으면 접속을 기다리는 중이다. 잠깐 두어 TCP를 열 시간을 준다.
-        sleep(Duration::from_millis(100)).await;
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let connected = ask(&connect_socket, &Request::PairConnect { addr, code }).await;
 
@@ -378,7 +381,6 @@ mod tests {
             .await
             .unwrap();
         let _code: Response = read_frame_async(&mut listening).await.unwrap();
-        sleep(Duration::from_millis(100)).await;
 
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let connected = ask(

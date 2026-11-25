@@ -133,8 +133,6 @@ async fn daemons_started_empty_are_set_up_and_paired_through_the_socket()
             .unwrap()
         });
         let code = timeout(WAIT, code_rx.recv()).await.unwrap().unwrap();
-        // 코드를 보낸 뒤 TCP를 여는 사이의 틈을 둔다.
-        sleep(Duration::from_millis(100)).await;
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, a.port));
         assert_eq!(
             ask(b.socket(), Request::PairConnect { addr, code }).await,
