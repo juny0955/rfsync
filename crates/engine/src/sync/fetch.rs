@@ -1,14 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use rfsync_protocol::Entry;
-use tokio::task::spawn_blocking;
 use tracing::{info, warn};
 
 use crate::{
     error::EngineError,
     local::{OnExisting, clear_pending, record_pending, save_received_file},
     peer::PeerHandle,
-    sync::compare::matches_entry,
+    sync::{blocking, compare::matches_entry},
 };
 
 /// 내게 없는 파일(`missing`)과 상대가 더 최신인 파일(`updated`)을 상대에게서 하나씩 받아 온다.
@@ -78,9 +77,7 @@ pub(super) async fn fetch_file(
 
     // 감시자가 받은 파일을 내가 만든 것으로 오해하지 않도록, 파일이 생기기 전에 상대의 버전을 기록해 둔다.
     let (pending_db, pending_entry) = (db_path.to_path_buf(), entry.clone());
-    spawn_blocking(move || record_pending(&pending_db, &pending_entry, false))
-        .await
-        .map_err(std::io::Error::other)??;
+    blocking(move || record_pending(&pending_db, &pending_entry, false)).await?;
 
     let saved = save_received_file(
         root,
@@ -106,9 +103,7 @@ pub(super) async fn fetch_file(
 pub(super) async fn clear_pending_logged(db_path: &Path, path: &str) {
     let (db_path, path) = (db_path.to_path_buf(), path.to_owned());
     let logged = path.clone();
-    match spawn_blocking(move || clear_pending(&db_path, &path)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => warn!("남은 수신 기록을 지우지 못했습니다: {logged}: {e}"),
-        Err(e) => warn!("수신 기록 지우기 작업이 실패했습니다: {logged}: {e}"),
+    if let Err(e) = blocking(move || clear_pending(&db_path, &path)).await {
+        warn!("남은 수신 기록을 지우지 못했습니다: {logged}: {e}");
     }
 }

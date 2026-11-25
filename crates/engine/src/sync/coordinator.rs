@@ -1,20 +1,16 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rfsync_protocol::{DeviceId, Entry};
-use tokio::{
-    sync::{
-        mpsc::{Receiver, Sender},
-        watch,
-    },
-    task::spawn_blocking,
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    watch,
 };
 use tracing::{debug, info, warn};
 
 use crate::{
-    error::EngineError,
     local::{first_root_path, merge_versions, spawn_watcher},
     peer::{PeerEvent, PeerHandle, load_index},
-    sync::{compare::changed_entries, plan::SyncPlan, serve::serve_file},
+    sync::{blocking, compare::changed_entries, plan::SyncPlan, serve::serve_file},
 };
 
 /// 세션 이벤트와 내 폴더의 변화를 받아 내 파일 목록을 상대와 맞추는 상태.
@@ -110,10 +106,9 @@ impl Coordinator {
     /// 내 폴더가 바뀌었다. DB에서 목록을 다시 읽어 직전 목록과 비교하고, 바뀐 항목을 연결된 상대 모두에게 보낸다.
     async fn on_local_changed(&mut self) {
         let db_path = self.db_path.clone();
-        let new_index = match spawn_blocking(move || load_index(&db_path)).await {
-            Ok(Ok(new_index)) => new_index,
-            Ok(Err(e)) => return warn!("바뀐 파일 목록을 읽지 못했습니다: {e}"),
-            Err(e) => return warn!("파일 목록 읽기 작업이 실패했습니다: {e}"),
+        let new_index = match blocking(move || load_index(&db_path)).await {
+            Ok(new_index) => new_index,
+            Err(e) => return warn!("바뀐 파일 목록을 읽지 못했습니다: {e}"),
         };
 
         let changed = changed_entries(&self.index, &new_index);
@@ -141,25 +136,24 @@ impl Coordinator {
             return;
         }
         let path = self.db_path.clone();
-        let result = spawn_blocking(move || {
+        let result = blocking(move || {
             let merged = merge_versions(&path, &merge)?;
             let index = if merged > 0 {
                 Some(load_index(&path)?)
             } else {
                 None
             };
-            Ok::<_, EngineError>((merged, index))
+            Ok((merged, index))
         })
         .await;
         match result {
-            Ok(Ok((merged, Some(new_index)))) => {
+            Ok((merged, Some(new_index))) => {
                 info!("내용이 같은 파일 {merged}개의 버전을 합쳤습니다");
                 self.index = new_index;
                 self.index_tx.send_replace(Arc::new(self.index.clone()));
             }
-            Ok(Ok((_, None))) => {}
-            Ok(Err(e)) => warn!("파일 버전을 합치지 못했습니다: {e}"),
-            Err(e) => warn!("파일 버전 합치기 작업이 실패했습니다: {e}"),
+            Ok((_, None)) => {}
+            Err(e) => warn!("파일 버전을 합치지 못했습니다: {e}"),
         }
     }
 }

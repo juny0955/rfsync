@@ -82,3 +82,15 @@ pub async fn run(
     coordinator.abort();
     result
 }
+
+/// 파일을 읽거나 DB를 여는 블로킹 작업을 전용 스레드에서 돌린다.
+/// 작업이 패닉 등으로 끝나지 못한 경우도 작업의 오류와 같은 `EngineError`로 돌려준다.
+async fn blocking<T, F>(work: F) -> Result<T, EngineError>
+where
+    F: FnOnce() -> Result<T, EngineError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(std::io::Error::other)?
+}

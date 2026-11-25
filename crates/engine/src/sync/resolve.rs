@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use rfsync_protocol::{DeviceId, Entry};
-use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
 use crate::{
     local::{OnExisting, PreserveOutcome, preserve_file},
     peer::PeerHandle,
     sync::{
+        blocking,
         conflict::{Winner, conflict_path, decide_winner},
         fetch::{FetchOutcome, fetch_file},
     },
@@ -126,18 +126,14 @@ async fn preserve_loser(
     for attempt in 0..MAX_PRESERVE_ATTEMPTS {
         let preserved = conflict_path(&mine.path, mine.modified_secs, me, attempt);
         let (root, path, name) = (root.to_path_buf(), mine.path.clone(), preserved.clone());
-        match spawn_blocking(move || preserve_file(&root, &path, &name)).await {
-            Ok(Ok(PreserveOutcome::AlreadyExists)) => continue,
-            Ok(Ok(outcome)) => return Some((preserved, outcome)),
-            Ok(Err(e)) => {
+        match blocking(move || preserve_file(&root, &path, &name)).await {
+            Ok(PreserveOutcome::AlreadyExists) => continue,
+            Ok(outcome) => return Some((preserved, outcome)),
+            Err(e) => {
                 warn!(
                     "진 파일을 남기지 못해 덮어쓰지 않습니다: {}: {e}",
                     mine.path
                 );
-                return None;
-            }
-            Err(e) => {
-                warn!("진 파일 남기기 작업이 실패했습니다: {}: {e}", mine.path);
                 return None;
             }
         }
