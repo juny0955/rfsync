@@ -6,7 +6,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{create_initial_snapshot_for_test, sync_path_for_test, sync_root_for_test};
+use rfsync_protocol::{Causality, VersionVector};
+
+use super::{
+    create_initial_snapshot_for_test, sync_path_for_test, sync_root_for_test, test_device,
+};
 use crate::{error::EngineError, watch_root};
 
 type Snapshot = (Vec<String>, Vec<(String, i64)>);
@@ -324,5 +328,135 @@ fn deleting_a_folder_keeps_tombstones_of_files_inside() -> Result<(), Box<dyn Er
         .ok_or("tombstone was removed")?;
     assert!(file.deleted);
     assert!(f.snapshot()?.1.is_empty());
+    Ok(())
+}
+
+/// 내가 `times`번 고친 파일의 version.
+fn my_version(times: u32) -> VersionVector {
+    let mut version = VersionVector::default();
+    for _ in 0..times {
+        version.bump(test_device());
+    }
+    version
+}
+
+fn stored_version(f: &Fixture, folder: &str, name: &str) -> Result<VersionVector, Box<dyn Error>> {
+    let conn = rfsync_storage::open(&f.db)?;
+    let file = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, folder, name)?
+        .ok_or("missing file")?;
+    Ok(VersionVector::from_bytes(&file.version)?)
+}
+
+#[test]
+fn sync_root_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("new"), b"hello")?;
+
+    sync_root_for_test(f.root_id, &f.db)?;
+
+    assert_eq!(stored_version(&f, "", "new")?, my_version(1));
+    Ok(())
+}
+
+#[test]
+fn sync_path_gives_a_new_file_my_first_version() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir(f.root.join("docs"))?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("docs/new"), b"hello")?;
+
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs/new"))?;
+
+    assert_eq!(stored_version(&f, "docs", "new")?, my_version(1));
+    Ok(())
+}
+
+#[test]
+fn sync_root_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(1));
+
+    fs::write(f.root.join("memo"), b"three")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+    Ok(())
+}
+
+#[test]
+fn sync_path_raises_my_counter_when_content_changes() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(1));
+
+    fs::write(f.root.join("memo"), b"three")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    assert_eq!(stored_version(&f, "", "memo")?, my_version(2));
+    Ok(())
+}
+
+#[test]
+fn changing_only_the_modified_time_keeps_the_version() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    let conn = rfsync_storage::open(&f.db)?;
+    let before = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+
+    // 내용은 그대로 두고 수정 시각만 한 시간 앞으로 돌린다.
+    let earlier = SystemTime::now() - std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(f.root.join("memo"))?
+        .set_modified(earlier)?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    let after_root = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+    // 수정 시각은 실제로 갱신됐지만 version은 그대로다.
+    assert_ne!(after_root.modified_secs, before.modified_secs);
+    assert_eq!(after_root.version, before.version);
+
+    let earlier = earlier - std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(f.root.join("memo"))?
+        .set_modified(earlier)?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    let after_path = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+    assert_ne!(after_path.modified_secs, after_root.modified_secs);
+    assert_eq!(after_path.version, before.version);
+    Ok(())
+}
+
+#[test]
+fn recreating_a_deleted_file_moves_its_version_ahead() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"one")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    fs::remove_file(f.root.join("memo"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    let tombstone = stored_version(&f, "", "memo")?;
+
+    // 같은 내용으로 다시 만들어도 삭제 기록보다 앞서야 상대가 새 변경으로 받는다.
+    fs::write(f.root.join("memo"), b"two")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+
+    let revived = stored_version(&f, "", "memo")?;
+    assert_eq!(revived.compare(&tombstone), Causality::LocalAhead);
     Ok(())
 }

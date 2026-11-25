@@ -66,7 +66,7 @@ pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<
 /// 3. 폴더 추가
 /// 4. 파일 추가
 /// 5. 파일 수정
-pub fn sync_root(conn: &mut DbConnection, root: &Root, _me: DeviceId) -> Result<(), EngineError> {
+pub fn sync_root(conn: &mut DbConnection, root: &Root, me: DeviceId) -> Result<(), EngineError> {
     let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
     // === START TRANSACTION ===
@@ -75,7 +75,7 @@ pub fn sync_root(conn: &mut DbConnection, root: &Root, _me: DeviceId) -> Result<
     let files = rfsync_storage::get_files_by_root_id(&tx, root.id)?;
 
     let diff = calc_diff(&entries, &folders, &files)?;
-    apply_diff(&tx, root.id, &folders, diff)?;
+    apply_diff(&tx, root.id, &folders, &files, diff, me)?;
     tx.commit().map_err(StorageError::from)?;
     // === END TRANSACTION ===
 
@@ -86,7 +86,7 @@ pub fn sync_path(
     conn: &mut DbConnection,
     root: &Root,
     target: &Path,
-    _me: DeviceId,
+    me: DeviceId,
 ) -> Result<(), EngineError> {
     let root_path = Path::new(&root.local_path);
     let entry = rfsync_fs::scan_path(root_path, target)?;
@@ -98,10 +98,10 @@ pub fn sync_path(
     match entry {
         // 폴더
         Some(entry) if entry.is_dir() => {
-            sync_directory(&tx, root.id, root_path, target, &target_path, entry)?
+            sync_directory(&tx, root.id, root_path, target, &target_path, entry, me)?
         }
         // 파일
-        Some(entry) => sync_file(&tx, root.id, target, &target_path, entry)?,
+        Some(entry) => sync_file(&tx, root.id, target, &target_path, entry, me)?,
         // 스캔 결과 없음 -> 제거
         None => remove_path(&tx, root.id, &target_path)?,
     }

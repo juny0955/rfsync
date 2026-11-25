@@ -13,7 +13,6 @@ pub(super) fn empty_version() -> Result<Vec<u8>, EngineError> {
 /// - 이전 행이 없으면 새 파일이므로 `{나: 1}`이다.
 /// - 삭제 표시가 아니고 해시가 같으면 내용이 안 바뀐 것(수정 시각만 달라진 경우)이라 version을 그대로 둔다.
 /// - 해시가 달라졌거나, 삭제 표시된 파일이 돌아왔으면 이전 version에서 내 카운터를 올린다.
-#[allow(dead_code)] // 4-3b-2에서 감시자 반영 경로에 연결한다.
 pub(super) fn next_file_version(
     previous: Option<&File>,
     observed_hash: &str,
@@ -39,7 +38,6 @@ pub(super) fn next_file_version(
 ///   받은 변경 위에 내가 또 고친 경우(`pending`은 있지만 상태가 다르다)에는 받은 이력도 합친 뒤 올린다.
 ///
 /// `observed_hash`는 디스크에서 관측한 해시다. 삭제를 관측했을 때는 지우기 직전 내용의 해시를 넘긴다.
-#[allow(dead_code)] // 4-3에서 감시자 반영 경로에 연결한다.
 pub(super) fn next_version(
     previous: &VersionVector,
     observed_hash: &str,

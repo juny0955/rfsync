@@ -4,14 +4,14 @@ use std::{
 };
 
 use rfsync_fs::FsEntry;
-use rfsync_storage::Folder;
+use rfsync_protocol::DeviceId;
+use rfsync_storage::{File, Folder};
 
 use crate::error::EngineError;
 
 use super::{
     diff::{SnapshotDiff, calc_diff},
-    entry::{portable_path, to_storage_file},
-    version::empty_version,
+    entry::{portable_path, to_local_storage_file},
 };
 
 pub fn sync_directory(
@@ -21,6 +21,7 @@ pub fn sync_directory(
     target: &Path,
     target_path: &str,
     entry: FsEntry,
+    me: DeviceId,
 ) -> Result<(), EngineError> {
     let mut entries = rfsync_fs::scan(&root_path.join(target))?;
 
@@ -44,7 +45,7 @@ pub fn sync_directory(
     let files = rfsync_storage::get_files_in_folder_ids(tx, &folder_ids)?;
 
     let diff = calc_diff(&entries, &folders, &files)?;
-    apply_diff(tx, root_id, &folders, diff)?;
+    apply_diff(tx, root_id, &folders, &files, diff, me)?;
     Ok(())
 }
 
@@ -54,6 +55,7 @@ pub fn sync_file(
     target: &Path,
     target_path: &str,
     entry: FsEntry,
+    me: DeviceId,
 ) -> Result<(), EngineError> {
     let (folder_path, file_name) = split_parent_and_name(target_path);
 
@@ -77,13 +79,13 @@ pub fn sync_file(
 
     match existing {
         Some(file) => {
-            let updated = to_storage_file(&entry, file.id, &folder_ids, empty_version()?)?;
+            let updated = to_local_storage_file(&entry, file.id, &folder_ids, Some(&file), me)?;
             if !rfsync_storage::update_file(tx, updated)? {
                 return Err(EngineError::FileNotFound(target.to_path_buf()));
             }
         }
         None => {
-            let new_file = to_storage_file(&entry, 0, &folder_ids, empty_version()?)?;
+            let new_file = to_local_storage_file(&entry, 0, &folder_ids, None, me)?;
             rfsync_storage::insert_file(tx, &new_file)?;
         }
     }
@@ -113,8 +115,11 @@ pub fn apply_diff(
     tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     folders: &[Folder],
+    files: &[File],
     diff: SnapshotDiff<'_>,
+    me: DeviceId,
 ) -> Result<(), EngineError> {
+    let previous: HashMap<i64, &File> = files.iter().map(|file| (file.id, file)).collect();
     let mut folder_ids: HashMap<PathBuf, i64> = folders
         .iter()
         .map(|folder| (PathBuf::from(&folder.relative_path), folder.id))
@@ -133,16 +138,21 @@ pub fn apply_diff(
     }
 
     for added_entry in diff.added_files {
-        let file = to_storage_file(added_entry, 0, &folder_ids, empty_version()?)?;
+        let file = to_local_storage_file(added_entry, 0, &folder_ids, None, me)?;
         rfsync_storage::insert_file(tx, &file)?;
     }
 
     for (modified_file_id, modified_entry) in diff.modified_files {
-        let file = to_storage_file(
+        let before = previous
+            .get(&modified_file_id)
+            .copied()
+            .ok_or_else(|| EngineError::FileNotFound(modified_entry.path.clone()))?;
+        let file = to_local_storage_file(
             modified_entry,
             modified_file_id,
             &folder_ids,
-            empty_version()?,
+            Some(before),
+            me,
         )?;
         if !rfsync_storage::update_file(tx, file)? {
             return Err(EngineError::FileNotFound(modified_entry.path.clone()));
