@@ -70,5 +70,6 @@ pub(super) fn to_storage_file(
         hash: hash.clone(),
         modified_secs: i64::try_from(modified.as_secs())?,
         modified_nanos: modified.subsec_nanos(),
+        deleted: false,
     })
 }

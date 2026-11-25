@@ -280,3 +280,80 @@ async fn nothing_is_transferred_when_both_nodes_already_have_the_same_files()
     assert_eq!(b.files(), expected(&files));
     Ok(())
 }
+
+/// 연결된 동안 한쪽이 파일을 지우면 상대에서도 지워진다.
+#[tokio::test]
+async fn a_file_deleted_while_connected_is_deleted_on_the_other_node() -> Result<(), Box<dyn Error>>
+{
+    let shared: [(&str, &[u8]); 2] = [("keep.txt", b"keep"), ("doomed.txt", b"doomed")];
+    let a = Node::new(&shared)?;
+    let b = Node::new(&shared)?;
+    pair(&b, &a)?;
+
+    with_nodes(&a, &b, || async {
+        // 연결과 감시가 준비된 것을 새 파일이 건너가는 것으로 확인한다. 감시가 아직 준비되지 않았을 때
+        // 만든 파일은 전달되지 않을 수 있으므로, 건너갈 때까지 이름을 바꿔 가며 다시 만든다.
+        let mut attempt = 0;
+        let ready = timeout(WAIT, async {
+            loop {
+                attempt += 1;
+                let name = format!("ready-{attempt}.txt");
+                fs::write(a.root.join(&name), b"ready").unwrap();
+                sleep(Duration::from_millis(200)).await;
+                if b.files().contains_key(&name) {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(ready.is_ok(), "연결과 감시가 준비되지 않았다");
+
+        fs::remove_file(a.root.join("doomed.txt")).unwrap();
+
+        wait_until("b에서도 doomed.txt가 지워진다", || {
+            !b.files().contains_key("doomed.txt")
+        })
+        .await;
+    })
+    .await?;
+
+    for node in [&a, &b] {
+        let files = node.files();
+        assert!(!files.contains_key("doomed.txt"), "지운 파일이 남아 있다");
+        assert_eq!(
+            files.get("keep.txt").map(Vec::as_slice),
+            Some(b"keep".as_slice())
+        );
+    }
+    Ok(())
+}
+
+/// 데몬이 꺼져 있는 동안 한쪽이 파일을 지우고 상대가 고쳤다면, 켜진 뒤 고친 파일이 지운 쪽으로 돌아와야 한다.
+///
+/// 지금은 실패하는 것이 정상이다. 데몬이 켜질 때 핸드셰이크로 보내는 목록은 감시가 폴더를 DB에 맞추기 전의
+/// 오래된 목록이라, 꺼져 있는 동안의 변경은 다음 변경 신호가 올 때까지 상대에게 알려지지 않는다.
+#[tokio::test]
+#[ignore = "시작 시점의 오래된 목록 문제: 꺼져 있는 동안의 변경이 전달되지 않는다"]
+async fn a_file_edited_on_the_other_node_survives_a_deletion() -> Result<(), Box<dyn Error>> {
+    let shared: [(&str, &[u8]); 1] = [("note.txt", b"original")];
+    let a = Node::new(&shared)?;
+    let b = Node::new(&shared)?;
+    // 연결되기 전에 b가 파일을 고친다. 데몬이 켜지면 b의 감시가 이 변경을 DB에 반영한다.
+    fs::write(b.root.join("note.txt"), b"edited on b")?;
+    // 연결되기 전에 a가 파일을 지운다.
+    fs::remove_file(a.root.join("note.txt"))?;
+    pair(&b, &a)?;
+
+    with_nodes(&a, &b, || async {
+        wait_until("a에 b가 고친 파일이 돌아온다", || {
+            a.files().get("note.txt").map(Vec::as_slice) == Some(b"edited on b".as_slice())
+        })
+        .await;
+    })
+    .await?;
+
+    let want = expected(&[("note.txt", b"edited on b")]);
+    assert!(a.files() == want, "a의 최종 파일 목록이 다르다");
+    assert!(b.files() == want, "b의 최종 파일 목록이 다르다");
+    Ok(())
+}

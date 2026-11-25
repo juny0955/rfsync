@@ -18,6 +18,7 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
         .collect();
 
     let mut entries = Vec::new();
+    // 삭제 표시된 파일도 싣는다. 상대가 삭제와 "원래 없던 파일"을 구분하려면 삭제 기록이 필요하다.
     for file in files {
         let parent = folder_paths
             .get(&file.folder_id)
@@ -34,6 +35,7 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
             hash: hash_from_hex(&file.hash)?,
             modified_secs: file.modified_secs,
             modified_nanos: file.modified_nanos,
+            deleted: file.deleted,
             path,
         });
     }
@@ -114,6 +116,27 @@ mod tests {
         assert_eq!(entries[1].path, "sub/b.txt");
         assert_eq!(entries[1].size, 6);
         assert_eq!(entries[1].hash, *blake3::hash(b"world!").as_bytes());
+    }
+
+    #[test]
+    fn 삭제_표시된_파일은_deleted_entry가_된다() {
+        let (_root, _db, conn, root_id) = register(&[("keep.txt", "1"), ("gone.txt", "2")]);
+        let gone = rfsync_storage::get_files_by_root_id(&conn, root_id)
+            .unwrap()
+            .into_iter()
+            .find(|file| file.name == "gone.txt")
+            .unwrap();
+        rfsync_storage::mark_file_deleted(&conn, gone.id).unwrap();
+
+        let entries = build_index(&conn, root_id).unwrap();
+
+        let flags: Vec<(&str, bool)> = entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.deleted))
+            .collect();
+        assert_eq!(flags, [("gone.txt", true), ("keep.txt", false)]);
+        // 삭제 기록에도 지우기 직전 내용의 해시가 남아 있다.
+        assert_eq!(entries[0].hash, *blake3::hash(b"2").as_bytes());
     }
 
     #[test]

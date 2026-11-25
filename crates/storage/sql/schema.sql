@@ -25,6 +25,8 @@ CREATE TABLE files (
     modified_secs   INTEGER NOT NULL,
     modified_nanos  INTEGER NOT NULL
                     CHECK ( modified_nanos BETWEEN 0 AND 999999999 ),
+    deleted         INTEGER NOT NULL DEFAULT 0
+                    CHECK ( deleted IN (0, 1) ),
 
     UNIQUE (folder_id, name)
 ) STRICT;

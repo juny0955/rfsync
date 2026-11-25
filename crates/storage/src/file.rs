@@ -10,6 +10,7 @@ pub struct File {
     pub hash: String,
     pub modified_secs: i64,
     pub modified_nanos: u32,
+    pub deleted: bool,
 }
 
 pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> {
@@ -21,16 +22,18 @@ pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> 
             fsize,
             hash,
             modified_secs,
-            modified_nanos
+            modified_nanos,
+            deleted
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             file.folder_id,
             &file.name,
             file.size,
             &file.hash,
             file.modified_secs,
-            file.modified_nanos
+            file.modified_nanos,
+            file.deleted
         ],
     )?;
 
@@ -47,7 +50,8 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
                 files.fsize,
                 files.hash,
                 files.modified_secs,
-                files.modified_nanos
+                files.modified_nanos,
+                files.deleted
             FROM files
             JOIN folders ON files.folder_id = folders.id
             WHERE folders.root_id = ?1
@@ -63,6 +67,7 @@ pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>
             hash: row.get(4)?,
             modified_secs: row.get(5)?,
             modified_nanos: row.get(6)?,
+            deleted: row.get(7)?,
         })
     })?;
 
@@ -79,7 +84,7 @@ pub fn get_files_in_folder_ids(
 
     let placeholders = vec!["?"; folder_ids.len()].join(", ");
     let sql = format!(
-        "SELECT id, folder_id, name, fsize, hash, modified_secs, modified_nanos
+        "SELECT id, folder_id, name, fsize, hash, modified_secs, modified_nanos, deleted
          FROM files
          WHERE folder_id IN ({placeholders})"
     );
@@ -94,6 +99,7 @@ pub fn get_files_in_folder_ids(
             hash: row.get(4)?,
             modified_secs: row.get(5)?,
             modified_nanos: row.get(6)?,
+            deleted: row.get(7)?,
         })
     })?;
 
@@ -116,7 +122,8 @@ pub fn get_file_by_folder_id_and_name(
                 files.fsize,
                 files.hash,
                 files.modified_secs,
-                files.modified_nanos
+                files.modified_nanos,
+                files.deleted
             FROM files
             JOIN folders ON files.folder_id = folders.id
             WHERE folders.root_id = ?1
@@ -133,6 +140,7 @@ pub fn get_file_by_folder_id_and_name(
                     hash: row.get(4)?,
                     modified_secs: row.get(5)?,
                     modified_nanos: row.get(6)?,
+                    deleted: row.get(7)?,
                 })
             },
         )
@@ -157,7 +165,8 @@ pub fn get_file_by_folder_and_name(
                 files.fsize,
                 files.hash,
                 files.modified_secs,
-                files.modified_nanos
+                files.modified_nanos,
+                files.deleted
             FROM files
             JOIN folders ON files.folder_id = folders.id
             WHERE folders.root_id = ?1
@@ -174,6 +183,7 @@ pub fn get_file_by_folder_and_name(
                     hash: row.get(4)?,
                     modified_secs: row.get(5)?,
                     modified_nanos: row.get(6)?,
+                    deleted: row.get(7)?,
                 })
             },
         )
@@ -188,6 +198,12 @@ pub fn delete_file_by_id(conn: &Connection, file_id: i64) -> Result<bool, Storag
     Ok(deleted > 0)
 }
 
+pub fn mark_file_deleted(conn: &Connection, file_id: i64) -> Result<bool, StorageError> {
+    let deleted = conn.execute("UPDATE files SET deleted = 1 WHERE id = ?1", [file_id])?;
+
+    Ok(deleted > 0)
+}
+
 pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> {
     let updated = conn.execute(
         "
@@ -197,8 +213,9 @@ pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> 
                 fsize = ?3,
                 hash = ?4,
                 modified_secs = ?5,
-                modified_nanos = ?6
-            WHERE id = ?7
+                modified_nanos = ?6,
+                deleted = ?7
+            WHERE id = ?8
         ",
         params![
             file.folder_id,
@@ -207,6 +224,7 @@ pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> 
             &file.hash,
             file.modified_secs,
             file.modified_nanos,
+            file.deleted,
             file.id,
         ],
     )?;
@@ -230,6 +248,7 @@ mod tests {
             hash: "a".repeat(64),
             modified_secs: 123,
             modified_nanos: 456,
+            deleted: false,
         }
     }
 
@@ -393,6 +412,32 @@ mod tests {
     }
 
     #[test]
+    fn marks_only_selected_file_as_deleted_and_keeps_its_hash() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let file_id = insert_file(&conn, &sample_file(folder_id))?;
+        let mut other = sample_file(folder_id);
+        other.name = "other.txt".into();
+        let other_id = insert_file(&conn, &other)?;
+
+        assert!(mark_file_deleted(&conn, file_id)?);
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        assert_eq!(files.len(), 2);
+        let marked = files.iter().find(|f| f.id == file_id).ok_or("missing")?;
+        let untouched = files.iter().find(|f| f.id == other_id).ok_or("missing")?;
+        assert!(marked.deleted);
+        assert_eq!(
+            (marked.hash.as_str(), marked.size),
+            ("a".repeat(64).as_str(), 42)
+        );
+        assert!(!untouched.deleted);
+        assert!(!mark_file_deleted(&conn, 42)?);
+        Ok(())
+    }
+
+    #[test]
     fn returns_false_when_file_does_not_exist() -> Result<(), Box<dyn Error>> {
         let conn = open(Path::new(":memory:"))?;
 
@@ -528,6 +573,7 @@ mod tests {
             hash: "a".repeat(64),
             modified_secs: 123,
             modified_nanos: 456,
+            deleted: false,
         };
         let id = insert_file(&conn, &file)?;
         file.folder_id = other_folder;
@@ -578,6 +624,7 @@ mod tests {
             hash: "a".repeat(64),
             modified_secs: 123,
             modified_nanos: 456,
+            deleted: false,
         };
         let first_id = insert_file(&conn, &file)?;
         file.folder_id = second;
@@ -623,6 +670,7 @@ mod tests {
                 hash: "a".repeat(64),
                 modified_secs: 123,
                 modified_nanos: 456,
+                deleted: false,
             },
         )?;
 

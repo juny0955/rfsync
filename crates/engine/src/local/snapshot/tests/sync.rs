@@ -51,6 +51,7 @@ impl Fixture {
             .collect();
         let mut files: Vec<_> = rfsync_storage::get_files_by_root_id(&conn, self.root_id)?
             .into_iter()
+            .filter(|file| !file.deleted)
             .map(|file| {
                 let parent = &folders
                     .iter()
@@ -102,7 +103,12 @@ fn sync_root_applies_changes_and_preserves_unchanged_files() -> Result<(), Box<d
     assert_eq!(
         f.snapshot()?,
         (
-            vec!["".into(), "added".into()],
+            vec![
+                "".into(),
+                "added".into(),
+                "removed".into(),
+                "removed/nested".into()
+            ],
             vec![
                 ("added/new".into(), 3),
                 ("modified".into(), 7),
@@ -137,7 +143,8 @@ fn sync_path_updates_only_selected_folder_tree() -> Result<(), Box<dyn Error>> {
                 "".into(),
                 "docs".into(),
                 "docs-old".into(),
-                "docs/new".into()
+                "docs/new".into(),
+                "docs/old".into()
             ],
             vec![
                 ("docs-old/keep".into(), 7),
@@ -195,14 +202,23 @@ fn sync_path_handles_file_folder_transitions_and_folder_deletion() -> Result<(),
     fs::remove_dir_all(f.root.join(target))?;
     fs::write(f.root.join(target), b"file")?;
     sync_path_for_test(f.root_id, &f.db, target)?;
-    assert_eq!(f.snapshot()?, (vec!["".into()], vec![("item".into(), 4)]));
+    assert_eq!(
+        f.snapshot()?,
+        (
+            vec!["".into(), "item".into(), "item/nested".into()],
+            vec![("item".into(), 4)]
+        )
+    );
     fs::remove_file(f.root.join(target))?;
     fs::create_dir_all(f.root.join("item/nested"))?;
     fs::write(f.root.join("item/nested/file"), b"new")?;
     sync_path_for_test(f.root_id, &f.db, target)?;
     fs::remove_dir_all(f.root.join(target))?;
     sync_path_for_test(f.root_id, &f.db, target)?;
-    assert_eq!(f.snapshot()?, (vec!["".into()], vec![]));
+    assert_eq!(
+        f.snapshot()?,
+        (vec!["".into(), "item".into(), "item/nested".into()], vec![])
+    );
     Ok(())
 }
 
@@ -252,5 +268,64 @@ fn synchronization_rejects_uninitialized_root() -> Result<(), Box<dyn Error>> {
     assert!(
         matches!(watch_path(&f.root, &f.db), Err(EngineError::NotInitializedRoot(id)) if id == f.root_id)
     );
+    Ok(())
+}
+
+#[test]
+fn deleting_a_file_keeps_a_tombstone_and_recreating_it_revives_the_same_row()
+-> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::write(f.root.join("memo"), b"hello")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+    let conn = rfsync_storage::open(&f.db)?;
+    let before = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+    assert!(!before.deleted);
+
+    fs::remove_file(f.root.join("memo"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    let tombstone = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("tombstone was removed")?;
+    assert_eq!(tombstone.id, before.id);
+    assert!(tombstone.deleted);
+    assert_eq!(tombstone.hash, before.hash);
+
+    // 같은 내용으로 다시 만들어도 되살아나야 한다.
+    fs::write(f.root.join("memo"), b"hello")?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("memo"))?;
+    let revived = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "", "memo")?
+        .ok_or("missing file")?;
+    assert_eq!(revived.id, before.id);
+    assert!(!revived.deleted);
+    Ok(())
+}
+
+#[test]
+fn deleting_a_folder_keeps_tombstones_of_files_inside() -> Result<(), Box<dyn Error>> {
+    let f = Fixture::new()?;
+    fs::create_dir_all(f.root.join("docs/nested"))?;
+    fs::write(f.root.join("docs/a"), b"a")?;
+    fs::write(f.root.join("docs/nested/b"), b"bb")?;
+    create_initial_snapshot_for_test(f.root_id, &f.db)?;
+
+    fs::remove_dir_all(f.root.join("docs"))?;
+    sync_path_for_test(f.root_id, &f.db, Path::new("docs"))?;
+
+    let conn = rfsync_storage::open(&f.db)?;
+    for (folder, name) in [("docs", "a"), ("docs/nested", "b")] {
+        let file = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, folder, name)?
+            .ok_or("tombstone was removed")?;
+        assert!(file.deleted);
+    }
+    // 같은 결과가 전체 동기화에서도 나와야 한다.
+    fs::create_dir(f.root.join("docs"))?;
+    fs::write(f.root.join("docs/a"), b"a")?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    fs::remove_dir_all(f.root.join("docs"))?;
+    sync_root_for_test(f.root_id, &f.db)?;
+    let file = rfsync_storage::get_file_by_folder_and_name(&conn, f.root_id, "docs", "a")?
+        .ok_or("tombstone was removed")?;
+    assert!(file.deleted);
+    assert!(f.snapshot()?.1.is_empty());
     Ok(())
 }

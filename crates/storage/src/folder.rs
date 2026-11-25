@@ -199,6 +199,7 @@ mod tests {
                     hash: "a".repeat(64),
                     modified_secs: 0,
                     modified_nanos: 0,
+                    deleted: false,
                 },
             )?;
         }
@@ -237,6 +238,7 @@ mod tests {
                 hash: "a".repeat(64),
                 modified_secs: 0,
                 modified_nanos: 0,
+                deleted: false,
             },
         )?;
 

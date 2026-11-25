@@ -33,7 +33,7 @@ pub fn sync_directory(
     let (parent_path, name) = split_parent_and_name(target_path);
 
     if let Some(file) = rfsync_storage::get_file_by_folder_and_name(tx, root_id, parent_path, name)?
-        && !rfsync_storage::delete_file_by_id(tx, file.id)?
+        && !rfsync_storage::mark_file_deleted(tx, file.id)?
     {
         return Err(EngineError::FileNotFound(target.to_path_buf()));
     }
@@ -63,8 +63,8 @@ pub fn sync_file(
             )
         })?;
 
-    // 이전에 같은 경로가 폴더였다면 하위 폴더까지 제거
-    remove_folder_tree(tx, root_id, target_path)?;
+    // 이전에 같은 경로가 폴더였다면 아래 파일을 모두 삭제 표시
+    mark_folder_tree_deleted(tx, root_id, target_path)?;
 
     let existing =
         rfsync_storage::get_file_by_folder_id_and_name(tx, root_id, parent.id, file_name)?;
@@ -95,14 +95,14 @@ pub fn remove_path(
     root_id: i64,
     target_path: &str,
 ) -> Result<(), EngineError> {
-    remove_folder_tree(tx, root_id, target_path)?;
+    mark_folder_tree_deleted(tx, root_id, target_path)?;
 
     let (folder_path, file_name) = split_parent_and_name(target_path);
 
     if let Some(file) =
         rfsync_storage::get_file_by_folder_and_name(tx, root_id, folder_path, file_name)?
     {
-        rfsync_storage::delete_file_by_id(tx, file.id)?;
+        rfsync_storage::mark_file_deleted(tx, file.id)?;
     }
 
     Ok(())
@@ -120,17 +120,9 @@ pub fn apply_diff(
         .collect();
 
     for (remove_file_id, path) in diff.removed_files {
-        if !rfsync_storage::delete_file_by_id(tx, remove_file_id)? {
+        if !rfsync_storage::mark_file_deleted(tx, remove_file_id)? {
             return Err(EngineError::FileNotFound(path.clone()));
         }
-    }
-
-    for (remove_folder_id, path) in diff.removed_folders {
-        if !rfsync_storage::delete_folder_by_id(tx, remove_folder_id)? {
-            return Err(EngineError::FolderNotFound(path.clone()));
-        }
-
-        folder_ids.remove(&path);
     }
 
     for added_folder_path in diff.added_folders {
@@ -154,15 +146,17 @@ pub fn apply_diff(
     Ok(())
 }
 
-fn remove_folder_tree(
+/// 경로 아래 모든 폴더의 파일을 삭제 표시한다. 폴더 행은 남긴다(지우면 CASCADE로 삭제 기록도 사라진다).
+fn mark_folder_tree_deleted(
     tx: &rfsync_storage::Transaction<'_>,
     root_id: i64,
     target_path: &str,
 ) -> Result<(), EngineError> {
     let folders = rfsync_storage::get_folders_with_under_path(tx, root_id, target_path)?;
+    let folder_ids: Vec<i64> = folders.iter().map(|folder| folder.id).collect();
 
-    for folder in folders {
-        rfsync_storage::delete_folder_by_id(tx, folder.id)?;
+    for file in rfsync_storage::get_files_in_folder_ids(tx, &folder_ids)? {
+        rfsync_storage::mark_file_deleted(tx, file.id)?;
     }
 
     Ok(())
