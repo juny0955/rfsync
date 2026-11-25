@@ -198,6 +198,12 @@ pub fn delete_file_by_id(conn: &Connection, file_id: i64) -> Result<bool, Storag
     Ok(deleted > 0)
 }
 
+pub fn mark_file_deleted(conn: &Connection, file_id: i64) -> Result<bool, StorageError> {
+    let deleted = conn.execute("UPDATE files SET deleted = 1 WHERE id = ?1", [file_id])?;
+
+    Ok(deleted > 0)
+}
+
 pub fn update_file(conn: &Connection, file: File) -> Result<bool, StorageError> {
     let updated = conn.execute(
         "
@@ -402,6 +408,32 @@ mod tests {
         let files = get_files_by_root_id(&conn, root_id)?;
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].id, other_id);
+        Ok(())
+    }
+
+    #[test]
+    fn marks_only_selected_file_as_deleted_and_keeps_its_hash() -> Result<(), Box<dyn Error>> {
+        let conn = open(Path::new(":memory:"))?;
+        let root_id = insert_root(&conn, "/example")?;
+        let folder_id = insert_folder(&conn, root_id, "")?;
+        let file_id = insert_file(&conn, &sample_file(folder_id))?;
+        let mut other = sample_file(folder_id);
+        other.name = "other.txt".into();
+        let other_id = insert_file(&conn, &other)?;
+
+        assert!(mark_file_deleted(&conn, file_id)?);
+
+        let files = get_files_by_root_id(&conn, root_id)?;
+        assert_eq!(files.len(), 2);
+        let marked = files.iter().find(|f| f.id == file_id).ok_or("missing")?;
+        let untouched = files.iter().find(|f| f.id == other_id).ok_or("missing")?;
+        assert!(marked.deleted);
+        assert_eq!(
+            (marked.hash.as_str(), marked.size),
+            ("a".repeat(64).as_str(), 42)
+        );
+        assert!(!untouched.deleted);
+        assert!(!mark_file_deleted(&conn, 42)?);
         Ok(())
     }
 
