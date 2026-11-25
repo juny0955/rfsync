@@ -36,6 +36,23 @@ pub(super) fn compare_index(local: &[Entry], remote: &[Entry]) -> IndexCompariso
     comparison
 }
 
+/// 내 목록이 `before`에서 `after`로 바뀌었을 때, 상대에게 알릴 항목을 골라낸다. 결과는 `after`의 순서를 따른다.
+///
+/// 새로 생겼거나 내용(해시)이 바뀐 파일만 담고, 담기는 것은 `after`의 항목이다.
+/// 삭제는 담지 않는다. 삭제를 표현할 방법(삭제 기록)이 아직 없다.
+pub(super) fn changed_entries(before: &[Entry], after: &[Entry]) -> Vec<Entry> {
+    let before_hashes: HashMap<&str, &[u8; 32]> = before
+        .iter()
+        .map(|entry| (entry.path.as_str(), &entry.hash))
+        .collect();
+
+    after
+        .iter()
+        .filter(|entry| before_hashes.get(entry.path.as_str()) != Some(&&entry.hash))
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +181,33 @@ mod tests {
 
         assert_eq!(paths(&comparison.missing), ["new.txt"]);
         assert_eq!(paths(&comparison.changed), ["diff.txt"]);
+    }
+
+    #[test]
+    fn 새로_생긴_파일과_내용이_바뀐_파일만_바뀐_항목이다() {
+        let before = vec![entry("a.txt", 1), entry("b.txt", 2)];
+        let after = vec![entry("a.txt", 1), entry("b.txt", 9), entry("c.txt", 3)];
+
+        let changed = changed_entries(&before, &after);
+
+        assert_eq!(paths(&changed), ["b.txt", "c.txt"]);
+        assert_eq!(changed[0].hash, [9; 32], "새 목록의 항목을 돌려준다");
+    }
+
+    #[test]
+    fn 내용이_같으면_수정시각이_달라도_바뀐_항목이_아니다() {
+        let before = vec![entry("a.txt", 1)];
+        let mut touched = entry("a.txt", 1);
+        touched.modified_secs = 999;
+
+        assert!(changed_entries(&before, &[touched]).is_empty());
+    }
+
+    #[test]
+    fn 삭제된_파일은_바뀐_항목에_넣지_않는다() {
+        let before = vec![entry("a.txt", 1), entry("gone.txt", 2)];
+        let after = vec![entry("a.txt", 1)];
+
+        assert!(changed_entries(&before, &after).is_empty());
     }
 }
