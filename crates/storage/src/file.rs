@@ -43,24 +43,27 @@ pub fn insert_file(conn: &Connection, file: &File) -> Result<i64, StorageError> 
     Ok(conn.last_insert_rowid())
 }
 
+// SELECT 컬럼 목록. row_to_file의 인덱스 순서와 맞아야 한다.
+const FILE_COLUMNS: &str = "
+    files.id,
+    files.folder_id,
+    files.name,
+    files.fsize,
+    files.hash,
+    files.modified_secs,
+    files.modified_nanos,
+    files.deleted,
+    files.version";
+
+// 폴더에 속한 파일 조회의 공통 FROM/JOIN 절.
+const FILES_JOIN_FOLDERS: &str = "
+    FROM files
+    JOIN folders ON files.folder_id = folders.id";
+
 pub fn get_files_by_root_id(conn: &Connection, root_id: i64) -> Result<Vec<File>, StorageError> {
-    let mut stmt = conn.prepare(
-        "
-            SELECT
-                files.id,
-                files.folder_id,
-                files.name,
-                files.fsize,
-                files.hash,
-                files.modified_secs,
-                files.modified_nanos,
-                files.deleted,
-                files.version
-            FROM files
-            JOIN folders ON files.folder_id = folders.id
-            WHERE folders.root_id = ?1
-        ",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {FILE_COLUMNS} {FILES_JOIN_FOLDERS} WHERE folders.root_id = ?1"
+    ))?;
 
     let rows = stmt.query_map([root_id], row_to_file)?;
 
@@ -76,20 +79,7 @@ pub fn get_files_in_folder_ids(
     }
 
     let placeholders = vec!["?"; folder_ids.len()].join(", ");
-    let sql = format!(
-        "SELECT 
-            id, 
-            folder_id, 
-            name, 
-            fsize, 
-            hash, 
-            modified_secs, 
-            modified_nanos, 
-            deleted, 
-            version
-         FROM files
-         WHERE folder_id IN ({placeholders})"
-    );
+    let sql = format!("SELECT {FILE_COLUMNS} FROM files WHERE files.folder_id IN ({placeholders})");
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(folder_ids.iter()), row_to_file)?;
@@ -105,23 +95,12 @@ pub fn get_file_by_folder_id_and_name(
 ) -> Result<Option<File>, StorageError> {
     let file = conn
         .query_row(
-            "
-            SELECT
-                files.id,
-                files.folder_id,
-                files.name,
-                files.fsize,
-                files.hash,
-                files.modified_secs,
-                files.modified_nanos,
-                files.deleted,
-                files.version
-            FROM files
-            JOIN folders ON files.folder_id = folders.id
-            WHERE folders.root_id = ?1
-                AND folders.id = ?2
-                AND files.name = ?3
-            ",
+            &format!(
+                "SELECT {FILE_COLUMNS} {FILES_JOIN_FOLDERS}
+                WHERE folders.root_id = ?1
+                    AND folders.id = ?2
+                    AND files.name = ?3"
+            ),
             params![root_id, folder_id, file_name],
             row_to_file,
         )
@@ -138,23 +117,12 @@ pub fn get_file_by_folder_and_name(
 ) -> Result<Option<File>, StorageError> {
     let file = conn
         .query_row(
-            "
-            SELECT
-                files.id,
-                files.folder_id,
-                files.name,
-                files.fsize,
-                files.hash,
-                files.modified_secs,
-                files.modified_nanos,
-                files.deleted,
-                files.version
-            FROM files
-            JOIN folders ON files.folder_id = folders.id
-            WHERE folders.root_id = ?1
-                AND folders.relative_path = ?2
-                AND files.name = ?3
-            ",
+            &format!(
+                "SELECT {FILE_COLUMNS} {FILES_JOIN_FOLDERS}
+                WHERE folders.root_id = ?1
+                    AND folders.relative_path = ?2
+                    AND files.name = ?3"
+            ),
             params![root_id, folder_path, file_name],
             row_to_file,
         )
