@@ -14,7 +14,7 @@ pub(crate) enum PreserveOutcome {
     SourceMissing,
     /// 일반 파일이 아니다(폴더, 심볼릭 링크 등). 보존하지 않는다.
     NotRegularFile,
-    /// 보존할 이름이 이미 있다. 덮어쓰지 않는다.
+    /// 보존할 이름에 다른 내용의 파일이 이미 있다. 덮어쓰지 않는다.
     AlreadyExists,
 }
 
@@ -23,6 +23,9 @@ pub(crate) enum PreserveOutcome {
 /// 두 이름이 같은 폴더에 있어야 한다. 하드 링크로 만들어서 같은 순간의 내용이 그대로 남고,
 /// 이어서 원래 이름이 새 파일로 바뀌어도(이름 바꾸기로 덮어쓰기) 보존한 쪽은 옛 내용을 유지한다.
 /// 하드 링크를 지원하지 않는 곳에서는 내용을 복사한다.
+///
+/// 보존할 이름에 내용이 같은 파일이 이미 있으면 이전 시도에서 남긴 것이므로 그대로 쓰고 `Preserved`다.
+/// 받기가 실패해 같은 충돌을 다시 처리할 때 멈추지 않게 하기 위해서다. 내용이 다르면 `AlreadyExists`다.
 ///
 /// 경로는 `save_received_file`과 같은 수준으로 검증한다. 글자 검증 뒤에, 부모 폴더의 실제 경로(심볼릭 링크를 푼 것)가
 /// 루트 안인지 확인하고, 파일 자체가 심볼릭 링크이면 링크가 가리키는 파일을 건드리지 않도록 보존하지 않는다.
@@ -62,8 +65,13 @@ pub(crate) fn preserve_file(
     if !metadata.is_file() {
         return Ok(PreserveOutcome::NotRegularFile);
     }
-    if target.symlink_metadata().is_ok() {
-        return Ok(PreserveOutcome::AlreadyExists);
+    if let Ok(existing) = target.symlink_metadata() {
+        let same = existing.is_file() && same_content(&source, &target)?;
+        return Ok(if same {
+            PreserveOutcome::Preserved
+        } else {
+            PreserveOutcome::AlreadyExists
+        });
     }
 
     match std::fs::hard_link(&source, &target) {
@@ -76,6 +84,19 @@ pub(crate) fn preserve_file(
             Err(e) => Err(e.into()),
         },
     }
+}
+
+/// 두 파일의 내용이 같은가. 크기가 다르면 읽지 않고 다르다고 본다.
+fn same_content(a: &Path, b: &Path) -> Result<bool, EngineError> {
+    if a.metadata()?.len() != b.metadata()?.len() {
+        return Ok(false);
+    }
+    let hash = |path: &Path| -> std::io::Result<blake3::Hash> {
+        Ok(blake3::Hasher::new()
+            .update_reader(&mut std::fs::File::open(path)?)?
+            .finalize())
+    };
+    Ok(hash(a)? == hash(b)?)
 }
 
 #[cfg(test)]
@@ -127,7 +148,16 @@ mod tests {
     }
 
     #[test]
-    fn 보존할_이름이_이미_있으면_덮어쓰지_않는다() {
+    fn 보존할_이름에_내용이_같은_파일이_이미_있으면_그대로_쓴다() {
+        let root = root_with(&[("a.txt", "mine"), ("a.conflict.txt", "mine")]);
+
+        let outcome = preserve_file(root.path(), "a.txt", "a.conflict.txt").unwrap();
+
+        assert_eq!(outcome, PreserveOutcome::Preserved);
+    }
+
+    #[test]
+    fn 보존할_이름에_다른_내용이_이미_있으면_덮어쓰지_않는다() {
         let root = root_with(&[("a.txt", "mine"), ("a.conflict.txt", "older")]);
 
         let outcome = preserve_file(root.path(), "a.txt", "a.conflict.txt").unwrap();

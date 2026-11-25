@@ -435,28 +435,15 @@ async fn resolve_conflicts(
     lost: Vec<LostConflict>,
 ) {
     for LostConflict { mine, theirs } in lost {
-        let preserved = conflict_path(&mine.path, mine.modified_secs, me);
-        let (blocking_root, path, name) = (root.clone(), mine.path.clone(), preserved.clone());
-        let outcome =
-            match spawn_blocking(move || preserve_file(&blocking_root, &path, &name)).await {
-                Ok(Ok(outcome)) => outcome,
-                Ok(Err(e)) => {
-                    warn!(
-                        "진 파일을 남기지 못해 덮어쓰지 않습니다: {}: {e}",
-                        mine.path
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!("진 파일 남기기 작업이 실패했습니다: {}: {e}", mine.path);
-                    continue;
-                }
-            };
+        let Some((preserved, outcome)) = preserve_loser(&root, &mine, me).await else {
+            continue;
+        };
         match outcome {
             PreserveOutcome::Preserved => {
                 info!("동시에 고쳐 내가 져서 내 파일을 남겼습니다: {preserved}")
             }
             PreserveOutcome::SourceMissing => debug!("남길 파일이 이미 없습니다: {}", mine.path),
+            // `AlreadyExists`는 `preserve_loser`가 이름을 바꿔 다시 시도하므로 여기까지 오지 않는다.
             PreserveOutcome::NotRegularFile | PreserveOutcome::AlreadyExists => {
                 warn!(
                     "진 파일을 남길 수 없어 덮어쓰지 않습니다: {} ({outcome:?})",
@@ -485,6 +472,42 @@ async fn resolve_conflicts(
             ),
         }
     }
+}
+
+/// 같은 이름에 다른 내용이 이미 있을 때 이름을 바꿔 가며 시도하는 최대 횟수.
+const MAX_PRESERVE_ATTEMPTS: u32 = 10;
+
+/// 내가 진 파일을 남긴다. 이름에 다른 내용이 이미 있으면 번호를 붙여 다른 이름으로 다시 시도한다.
+/// 남긴 이름과 결과를 돌려주며, 실패하면 이유를 로그에 남기고 `None`이다.
+async fn preserve_loser(
+    root: &Path,
+    mine: &Entry,
+    me: DeviceId,
+) -> Option<(String, PreserveOutcome)> {
+    for attempt in 0..MAX_PRESERVE_ATTEMPTS {
+        let preserved = conflict_path(&mine.path, mine.modified_secs, me, attempt);
+        let (root, path, name) = (root.to_path_buf(), mine.path.clone(), preserved.clone());
+        match spawn_blocking(move || preserve_file(&root, &path, &name)).await {
+            Ok(Ok(PreserveOutcome::AlreadyExists)) => continue,
+            Ok(Ok(outcome)) => return Some((preserved, outcome)),
+            Ok(Err(e)) => {
+                warn!(
+                    "진 파일을 남기지 못해 덮어쓰지 않습니다: {}: {e}",
+                    mine.path
+                );
+                return None;
+            }
+            Err(e) => {
+                warn!("진 파일 남기기 작업이 실패했습니다: {}: {e}", mine.path);
+                return None;
+            }
+        }
+    }
+    warn!(
+        "진 파일을 남길 이름을 찾지 못해 덮어쓰지 않습니다: {}",
+        mine.path
+    );
+    None
 }
 
 /// 파일 하나를 받으려던 결과.

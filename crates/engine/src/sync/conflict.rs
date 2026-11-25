@@ -32,7 +32,14 @@ pub(super) fn decide_winner(
 ///
 /// 시각은 진 파일의 수정시각(UTC)이고, 장치는 그 파일을 가진 장치다. 확장자가 없으면 끝에 붙인다.
 /// 폴더는 그대로 두고 파일 이름만 바꾼다.
-pub(super) fn conflict_path(path: &str, loser_modified_secs: i64, loser: DeviceId) -> String {
+///
+/// 같은 이름에 다른 내용이 이미 있으면 `attempt`를 1, 2, …로 올려 `-1`, `-2`를 장치 ID 뒤에 붙인 다른 이름을 쓴다.
+pub(super) fn conflict_path(
+    path: &str,
+    loser_modified_secs: i64,
+    loser: DeviceId,
+    attempt: u32,
+) -> String {
     let (dir, name) = match path.rsplit_once('/') {
         Some((dir, name)) => (Some(dir), name),
         None => (None, path),
@@ -46,8 +53,13 @@ pub(super) fn conflict_path(path: &str, loser_modified_secs: i64, loser: DeviceI
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
+    let retry = if attempt == 0 {
+        String::new()
+    } else {
+        format!("-{attempt}")
+    };
     let file = format!(
-        "{stem}.sync-conflict-{}-{id}{extension}",
+        "{stem}.sync-conflict-{}-{id}{retry}{extension}",
         format_utc(loser_modified_secs)
     );
     match dir {
@@ -156,7 +168,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            conflict_path("note.txt", 0, id),
+            conflict_path("note.txt", 0, id, 0),
             format!("note.sync-conflict-19700101-000000-{short}.txt")
         );
     }
@@ -170,7 +182,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            conflict_path("docs/sub/note.txt", 0, id),
+            conflict_path("docs/sub/note.txt", 0, id, 0),
             format!("docs/sub/note.sync-conflict-19700101-000000-{short}.txt")
         );
     }
@@ -184,11 +196,11 @@ mod tests {
             .collect();
 
         assert_eq!(
-            conflict_path("README", 0, id),
+            conflict_path("README", 0, id, 0),
             format!("README.sync-conflict-19700101-000000-{short}")
         );
         assert_eq!(
-            conflict_path("d/.bashrc", 0, id),
+            conflict_path("d/.bashrc", 0, id, 0),
             format!("d/.bashrc.sync-conflict-19700101-000000-{short}")
         );
     }
@@ -202,8 +214,22 @@ mod tests {
             .collect();
 
         assert_eq!(
-            conflict_path("a.tar.gz", 0, id),
+            conflict_path("a.tar.gz", 0, id, 0),
             format!("a.tar.sync-conflict-19700101-000000-{short}.gz")
+        );
+    }
+
+    #[test]
+    fn 시도_횟수가_늘면_장치_id_뒤에_번호가_붙는다() {
+        let id = DeviceId::from_cert(b"a");
+        let short: String = id.as_bytes()[..2]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+
+        assert_eq!(
+            conflict_path("d/note.txt", 0, id, 2),
+            format!("d/note.sync-conflict-19700101-000000-{short}-2.txt")
         );
     }
 
