@@ -12,9 +12,9 @@ use tracing::{debug, info, warn};
 
 use crate::{
     error::EngineError,
-    local::{first_root_path, open_for_serving, save_received_file},
+    local::{first_root_path, open_for_serving, save_received_file, spawn_watcher},
     peer::{self, FileOffer, Identity, PeerEvent, PeerHandle, load_index},
-    sync::compare::{IndexComparison, compare_index},
+    sync::compare::{IndexComparison, changed_entries, compare_index},
 };
 
 mod compare;
@@ -29,7 +29,16 @@ pub async fn run(
     let index = load_index(db_path)?;
     let root = first_root_path(db_path)?;
     let (events, receiver) = mpsc::channel(32);
-    let coordinator = tokio::spawn(run_coordinator(index.clone(), root, receiver));
+    // 용량 1: 신호가 쌓여 있으면 받는 쪽이 곧 최신 상태를 읽으므로 더 쌓을 필요가 없다.
+    let (local_changed, local_receiver) = mpsc::channel(1);
+    spawn_watcher(db_path, local_changed)?;
+    let coordinator = tokio::spawn(run_coordinator(
+        index.clone(),
+        root,
+        db_path.to_path_buf(),
+        receiver,
+        local_receiver,
+    ));
 
     let result = peer::run(identity, port, db_path, index, events, shutdown).await;
 
@@ -39,35 +48,85 @@ pub async fn run(
 }
 
 async fn run_coordinator(
-    index: Vec<Entry>,
+    mut index: Vec<Entry>,
     root: Option<PathBuf>,
+    db_path: PathBuf,
     mut events: Receiver<PeerEvent>,
+    mut local_changed: Receiver<()>,
 ) {
-    while let Some(event) = events.recv().await {
-        match event {
-            PeerEvent::IndexReceived {
-                index: peer_index,
-                peer,
-            } => {
-                let comparison = on_index_received(&index, &peer_index);
-                match root.clone() {
-                    // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
-                    Some(root) => {
-                        tokio::spawn(fetch_missing(peer, root, comparison.missing));
+    // 연결된 상대들. 내 폴더가 바뀌면 이들에게 알린다.
+    let mut peers: Vec<PeerHandle> = Vec::new();
+
+    loop {
+        tokio::select! {
+            event = events.recv() => {
+                let Some(event) = event else { break };
+                match event {
+                    PeerEvent::IndexReceived {
+                        index: peer_index,
+                        peer,
+                    } => {
+                        peers.push(peer.clone());
+                        start_fetch(&index, &root, peer, &peer_index);
                     }
-                    None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
+                    // 연결된 뒤의 변경도 첫 목록과 같은 비교와 받아 오기를 거친다. 바뀐 항목만 들어 있다.
+                    PeerEvent::IndexUpdated { entries, peer } => {
+                        start_fetch(&index, &root, peer, &entries)
+                    }
+                    PeerEvent::FileRequested { path, reply } => {
+                        // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
+                        let root = root.clone();
+                        tokio::spawn(async move {
+                            let offer = serve_file(root, path).await;
+                            // 요청한 세션이 이미 끝났으면 받는 쪽이 없다. 버려도 된다.
+                            let _ = reply.send(offer);
+                        });
+                    }
                 }
             }
-            PeerEvent::FileRequested { path, reply } => {
-                // 큰 파일의 해시 계산이 다른 이벤트 처리를 막지 않도록 요청마다 따로 처리한다.
-                let root = root.clone();
-                tokio::spawn(async move {
-                    let offer = serve_file(root, path).await;
-                    // 요청한 세션이 이미 끝났으면 받는 쪽이 없다. 버려도 된다.
-                    let _ = reply.send(offer);
-                });
+            // 감시가 끝나 송신구가 닫히면 이 분기만 꺼지고 나머지는 계속 돈다.
+            Some(()) = local_changed.recv() => {
+                on_local_changed(&mut index, &mut peers, &db_path).await;
             }
         }
+    }
+}
+
+/// 내 폴더가 바뀌었다. DB에서 목록을 다시 읽어 직전 목록과 비교하고, 바뀐 항목을 연결된 상대 모두에게 보낸다.
+async fn on_local_changed(index: &mut Vec<Entry>, peers: &mut Vec<PeerHandle>, db_path: &Path) {
+    let db_path = db_path.to_path_buf();
+    let new_index = match spawn_blocking(move || load_index(&db_path)).await {
+        Ok(Ok(new_index)) => new_index,
+        Ok(Err(e)) => return warn!("바뀐 파일 목록을 읽지 못했습니다: {e}"),
+        Err(e) => return warn!("파일 목록 읽기 작업이 실패했습니다: {e}"),
+    };
+
+    let changed = changed_entries(index, &new_index);
+    *index = new_index;
+    if changed.is_empty() {
+        return;
+    }
+    info!("내 파일 {}개가 바뀌어 상대에게 알립니다", changed.len());
+
+    // 보내지 못한 상대는 연결이 끝난 것이므로 목록에서 뺀다.
+    let mut alive = Vec::with_capacity(peers.len());
+    for peer in peers.drain(..) {
+        if peer.send_update(changed.clone()).await.is_ok() {
+            alive.push(peer);
+        }
+    }
+    *peers = alive;
+}
+
+/// 상대의 목록(또는 변경 목록)을 내 목록과 비교해, 내게 없는 파일을 받아 오는 작업을 띄운다.
+fn start_fetch(mine: &[Entry], root: &Option<PathBuf>, peer: PeerHandle, theirs: &[Entry]) {
+    let comparison = on_index_received(mine, theirs);
+    match root.clone() {
+        // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
+        Some(root) => {
+            tokio::spawn(fetch_missing(peer, root, comparison.missing));
+        }
+        None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
     }
 }
 
@@ -209,7 +268,14 @@ mod tests {
     /// coordinator를 띄우고, 파일 하나를 요청해 답을 받아 온다.
     async fn request(root: Option<PathBuf>, path: &str) -> Option<FileOffer> {
         let (events, receiver) = mpsc::channel(8);
-        tokio::spawn(run_coordinator(Vec::new(), root, receiver));
+        let (_local_changed, local_receiver) = mpsc::channel(1);
+        tokio::spawn(run_coordinator(
+            Vec::new(),
+            root,
+            PathBuf::new(),
+            receiver,
+            local_receiver,
+        ));
 
         let (reply, answer) = tokio::sync::oneshot::channel();
         events

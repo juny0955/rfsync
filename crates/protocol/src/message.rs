@@ -34,6 +34,11 @@ pub enum Message {
     },
     /// 요청한 파일이 없다. 뒤에 이어지는 내용은 없다.
     FileNotFound,
+    /// 연결된 뒤에 바뀐 항목만 보낸다. `Index`와 달리 전체 목록이 아니다.
+    /// 변형은 순서 번호로 직렬화되므로 새 변형은 항상 맨 뒤에 추가한다.
+    IndexUpdate {
+        entries: Vec<Entry>,
+    },
 }
 
 pub fn encode(msg: &Message) -> Result<Vec<u8>, ProtocolError> {
@@ -97,6 +102,21 @@ mod tests {
         let not_found = Message::FileNotFound;
         assert_eq!(decode(&encode(&found).unwrap()).unwrap(), found);
         assert_eq!(decode(&encode(&not_found).unwrap()).unwrap(), not_found);
+    }
+
+    #[test]
+    fn index_update를_바이트로_바꿨다_되돌리면_같다() {
+        let msg = Message::IndexUpdate {
+            entries: vec![Entry {
+                path: "sub/새 파일.txt".to_string(),
+                size: 5,
+                hash: [3u8; 32],
+                modified_secs: 1_700_000_000,
+                modified_nanos: 1,
+            }],
+        };
+        let bytes = encode(&msg).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), msg);
     }
 
     #[test]

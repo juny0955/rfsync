@@ -65,6 +65,9 @@ pub enum EngineError {
     #[error("받은 파일의 해시가 맞지 않습니다: {0}")]
     HashMismatch(String),
 
+    #[error("상대와의 연결이 끝나 보낼 수 없습니다")]
+    PeerDisconnected,
+
     #[error("예상하지 못한 메시지입니다: {0}가 와야 합니다")]
     UnexpectedMessage(&'static str),
 }
