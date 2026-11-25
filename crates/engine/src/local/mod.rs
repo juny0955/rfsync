@@ -3,12 +3,14 @@
 
 mod path;
 mod receive;
+mod remove;
 mod root;
 mod serve;
 mod snapshot;
 mod watcher;
 
 pub(crate) use receive::save_received_file;
+pub(crate) use remove::{DeleteOutcome, delete_if_unchanged};
 pub(crate) use root::first_root_path;
 pub use root::register_root;
 pub(crate) use serve::open_for_serving;

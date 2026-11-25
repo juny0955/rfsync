@@ -12,7 +12,10 @@ use tracing::{debug, info, warn};
 
 use crate::{
     error::EngineError,
-    local::{first_root_path, open_for_serving, save_received_file, spawn_watcher},
+    local::{
+        DeleteOutcome, delete_if_unchanged, first_root_path, open_for_serving, save_received_file,
+        spawn_watcher,
+    },
     peer::{self, FileOffer, Identity, PeerEvent, PeerHandle, load_index},
     sync::compare::{IndexComparison, changed_entries, compare_index},
 };
@@ -118,15 +121,43 @@ async fn on_local_changed(index: &mut Vec<Entry>, peers: &mut Vec<PeerHandle>, d
     *peers = alive;
 }
 
-/// 상대의 목록(또는 변경 목록)을 내 목록과 비교해, 내게 없는 파일을 받아 오는 작업을 띄운다.
+/// 상대의 목록(또는 변경 목록)을 내 목록과 비교해, 내게 없는 파일을 받아 오고 상대가 지운 파일을 지우는 작업을 띄운다.
 fn start_fetch(mine: &[Entry], root: &Option<PathBuf>, peer: PeerHandle, theirs: &[Entry]) {
     let comparison = on_index_received(mine, theirs);
     match root.clone() {
         // 연결마다 따로 받는다. 한 연결에서 받는 중에도 다른 이벤트 처리가 막히지 않는다.
         Some(root) => {
+            if !comparison.deleted.is_empty() {
+                tokio::spawn(delete_files(root.clone(), comparison.deleted));
+            }
             tokio::spawn(fetch_missing(peer, root, comparison.missing));
         }
-        None => debug!("등록된 루트가 없어 파일을 받지 않습니다"),
+        None => debug!("등록된 루트가 없어 파일을 받거나 지우지 않습니다"),
+    }
+}
+
+/// 상대가 지운 파일을 내 폴더에서 지운다. 내용이 목록의 해시와 같은 파일만 지우며, 한 파일이 실패해도 나머지는 계속한다.
+///
+/// 지운 뒤의 삭제 기록은 감시가 폴더 변화를 보고 DB에 남기고, 상대에게도 같은 경로로 알린다.
+async fn delete_files(root: PathBuf, deleted: Vec<Entry>) {
+    for entry in deleted {
+        let (path, hash, root) = (entry.path.clone(), entry.hash, root.clone());
+        // 파일을 읽고 해시를 계산하는 일은 오래 걸릴 수 있어 블로킹 전용 스레드에서 한다.
+        let result = spawn_blocking(move || delete_if_unchanged(&root, &path, &hash)).await;
+        match result {
+            Ok(Ok(DeleteOutcome::Deleted)) => {
+                info!("상대가 지워서 파일을 지웠습니다: {}", entry.path)
+            }
+            Ok(Ok(DeleteOutcome::AlreadyGone)) => debug!("이미 없는 파일입니다: {}", entry.path),
+            Ok(Ok(DeleteOutcome::Changed)) => {
+                info!("내가 고친 파일이라 지우지 않습니다: {}", entry.path)
+            }
+            Ok(Ok(DeleteOutcome::NotRegularFile)) => {
+                warn!("일반 파일이 아니라 지우지 않습니다: {}", entry.path)
+            }
+            Ok(Err(e)) => warn!("파일을 지우지 못했습니다: {}: {e}", entry.path),
+            Err(e) => warn!("파일 지우기 작업이 실패했습니다: {}: {e}", entry.path),
+        }
     }
 }
 
@@ -224,9 +255,10 @@ fn matches_entry(entry: &Entry, size: u64, hash: &[u8; 32]) -> bool {
 fn on_index_received(mine: &[Entry], theirs: &[Entry]) -> IndexComparison {
     let comparison = compare_index(mine, theirs);
     info!(
-        "내게 없는 파일 {}개, 내용이 다른 파일 {}개",
+        "내게 없는 파일 {}개, 내용이 다른 파일 {}개, 상대가 지운 파일 {}개",
         comparison.missing.len(),
-        comparison.changed.len()
+        comparison.changed.len(),
+        comparison.deleted.len()
     );
 
     for entry in &comparison.missing {
@@ -235,6 +267,10 @@ fn on_index_received(mine: &[Entry], theirs: &[Entry]) -> IndexComparison {
 
     for entry in &comparison.changed {
         debug!("내용이 다른 파일: {}", entry.path);
+    }
+
+    for entry in &comparison.deleted {
+        debug!("상대가 지운 파일: {}", entry.path);
     }
 
     comparison
