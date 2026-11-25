@@ -36,8 +36,7 @@ pub fn build_index(conn: &DbConnection, root_id: i64) -> Result<Vec<Entry>, Engi
             modified_secs: file.modified_secs,
             modified_nanos: file.modified_nanos,
             deleted: file.deleted,
-            // 저장소에 버전 컬럼이 생기기 전까지는 빈 벡터를 보낸다.
-            version: VersionVector::default(),
+            version: VersionVector::from_bytes(&file.version)?,
             path,
         });
     }
@@ -139,6 +138,40 @@ mod tests {
         assert_eq!(flags, [("gone.txt", true), ("keep.txt", false)]);
         // 삭제 기록에도 지우기 직전 내용의 해시가 남아 있다.
         assert_eq!(entries[0].hash, *blake3::hash(b"2").as_bytes());
+    }
+
+    #[test]
+    fn 저장된_버전이_entry의_version이_된다() {
+        let (_root, _db, conn, root_id) = register(&[("a.txt", "1"), ("b.txt", "2")]);
+        let mut stored = VersionVector::default();
+        stored.bump(rfsync_protocol::DeviceId::from_cert(b"device"));
+        stored.bump(rfsync_protocol::DeviceId::from_cert(b"device"));
+        let mut file = rfsync_storage::get_files_by_root_id(&conn, root_id)
+            .unwrap()
+            .into_iter()
+            .find(|file| file.name == "a.txt")
+            .unwrap();
+        file.version = stored.to_bytes().unwrap();
+        rfsync_storage::update_file(&conn, file).unwrap();
+
+        let entries = build_index(&conn, root_id).unwrap();
+
+        assert_eq!(entries[0].path, "a.txt");
+        assert_eq!(entries[0].version, stored);
+        // 버전을 바꾸지 않은 파일은 처음 등록 때의 빈 벡터 그대로다.
+        assert_eq!(entries[1].version, VersionVector::default());
+    }
+
+    #[test]
+    fn 읽을_수_없는_버전이_저장되어_있으면_에러다() {
+        let (_root, _db, conn, root_id) = register(&[("a.txt", "1")]);
+        let mut file = rfsync_storage::get_files_by_root_id(&conn, root_id)
+            .unwrap()
+            .remove(0);
+        file.version = Vec::new();
+        rfsync_storage::update_file(&conn, file).unwrap();
+
+        assert!(build_index(&conn, root_id).is_err());
     }
 
     #[test]

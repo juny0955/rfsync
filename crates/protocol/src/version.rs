@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::DeviceId;
+use crate::{DeviceId, ProtocolError};
 
 /// 장치별 수정 횟수 정보
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +57,16 @@ impl VersionVector {
             let mine = self.0.entry(device).or_insert(0);
             *mine = (*mine).max(count);
         }
+    }
+
+    /// 저장소에 넣을 바이트로 바꾼다.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, ProtocolError> {
+        Ok(postcard::to_stdvec(self)?)
+    }
+
+    /// 저장소에서 읽은 바이트를 벡터로 되돌린다.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtocolError> {
+        Ok(postcard::from_bytes(bytes)?)
     }
 }
 
@@ -182,5 +192,30 @@ mod tests {
 
         assert_eq!(local.compare(&remote), Causality::LocalAhead);
         assert_eq!(remote.compare(&local), Causality::RemoteAhead);
+    }
+
+    #[test]
+    fn 바이트로_바꿨다_되돌리면_같은_벡터다() {
+        let original = vector(&[("a", 2), ("b", 1)]);
+
+        let bytes = original.to_bytes().unwrap();
+
+        assert_eq!(VersionVector::from_bytes(&bytes).unwrap(), original);
+    }
+
+    #[test]
+    fn 빈_벡터도_바이트로_왕복한다() {
+        let bytes = VersionVector::default().to_bytes().unwrap();
+
+        assert!(!bytes.is_empty());
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            VersionVector::default()
+        );
+    }
+
+    #[test]
+    fn 빈_바이트는_벡터로_읽을_수_없다() {
+        assert!(VersionVector::from_bytes(&[]).is_err());
     }
 }
