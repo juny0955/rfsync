@@ -85,11 +85,20 @@ pub(crate) fn preserve_file(
         });
     }
 
-    match std::fs::hard_link(&source, &target) {
+    link_or_copy(&source, &target, hash)
+}
+
+/// 하드 링크로 `target`을 만들고, 안 되면 복사한다. 결과를 `PreserveOutcome`으로 옮긴다.
+fn link_or_copy(
+    source: &Path,
+    target: &Path,
+    hash: [u8; 32],
+) -> Result<PreserveOutcome, EngineError> {
+    match std::fs::hard_link(source, target) {
         Ok(()) => Ok(PreserveOutcome::Preserved(hash)),
         Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(PreserveOutcome::AlreadyExists),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(PreserveOutcome::SourceMissing),
-        Err(_) => match copy_exclusive(&source, &target) {
+        Err(_) => match copy_exclusive(source, target) {
             Ok(()) => Ok(PreserveOutcome::Preserved(hash)),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(PreserveOutcome::AlreadyExists),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(PreserveOutcome::SourceMissing),

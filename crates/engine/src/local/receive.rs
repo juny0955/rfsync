@@ -66,6 +66,33 @@ pub(crate) async fn save_received_file(
         .into_parts();
     let mut file = File::from_std(std_file);
 
+    receive_into(&mut file, reader, size, expected_hash, requested).await?;
+    drop(file);
+
+    let persisted = match on_existing {
+        OnExisting::Fail => temp_path.persist_noclobber(&destination),
+        OnExisting::ReplaceIfHash(expected) => {
+            // 받는 동안 내가 고쳤거나 지웠다면 덮어쓰지 않는다. 다음 비교가 새 상태로 다시 판단한다.
+            if !has_content(&destination, expected).await? {
+                return Err(EngineError::LocalChanged(requested.to_owned()));
+            }
+            temp_path.persist(&destination)
+        }
+    };
+    persisted.map_err(|e| match e.error.kind() {
+        ErrorKind::AlreadyExists => already_exists(requested),
+        _ => EngineError::Io(e.error),
+    })
+}
+
+/// `reader`에서 `size`바이트를 받아 `file`에 쓰고, 해시가 `expected_hash`와 맞는지 확인한 뒤 디스크에 내린다.
+async fn receive_into(
+    file: &mut File,
+    reader: &mut (impl AsyncRead + Unpin),
+    size: u64,
+    expected_hash: [u8; 32],
+    requested: &str,
+) -> Result<(), EngineError> {
     let mut hasher = blake3::Hasher::new();
     let mut buffer = vec![0u8; BUFFER_SIZE];
     let mut remaining = size;
@@ -88,22 +115,7 @@ pub(crate) async fn save_received_file(
     // 이름을 바꾸기 전에 내용을 디스크에 내려 두어, 중간에 꺼져도 반쯤 쓴 파일이 진짜 이름이 되지 않게 한다.
     file.flush().await?;
     file.sync_all().await?;
-    drop(file);
-
-    let persisted = match on_existing {
-        OnExisting::Fail => temp_path.persist_noclobber(&destination),
-        OnExisting::ReplaceIfHash(expected) => {
-            // 받는 동안 내가 고쳤거나 지웠다면 덮어쓰지 않는다. 다음 비교가 새 상태로 다시 판단한다.
-            if !has_content(&destination, expected).await? {
-                return Err(EngineError::LocalChanged(requested.to_owned()));
-            }
-            temp_path.persist(&destination)
-        }
-    };
-    persisted.map_err(|e| match e.error.kind() {
-        ErrorKind::AlreadyExists => already_exists(requested),
-        _ => EngineError::Io(e.error),
-    })
+    Ok(())
 }
 
 /// 저장할 폴더가 루트 안에 있도록 확인하고, 없으면 만든다. 실제 경로(심볼릭 링크를 푼 것)를 돌려준다.
