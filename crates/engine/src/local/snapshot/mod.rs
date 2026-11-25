@@ -13,6 +13,7 @@ use self::{
 use crate::error::EngineError;
 
 use self::entry::{portable_path, to_storage_file};
+use self::version::empty_version;
 
 mod diff;
 mod entry;
@@ -45,7 +46,7 @@ pub fn create_initial_snapshot(conn: &mut DbConnection, root_id: i64) -> Result<
     }
 
     for entry in entries.iter().filter(|entry| !entry.is_dir()) {
-        let file = to_storage_file(entry, 0, &folder_ids)?;
+        let file = to_storage_file(entry, 0, &folder_ids, empty_version()?)?;
         rfsync_storage::insert_file(&tx, &file)?;
     }
 

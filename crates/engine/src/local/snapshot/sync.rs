@@ -11,6 +11,7 @@ use crate::error::EngineError;
 use super::{
     diff::{SnapshotDiff, calc_diff},
     entry::{portable_path, to_storage_file},
+    version::empty_version,
 };
 
 pub fn sync_directory(
@@ -76,13 +77,13 @@ pub fn sync_file(
 
     match existing {
         Some(file) => {
-            let updated = to_storage_file(&entry, file.id, &folder_ids)?;
+            let updated = to_storage_file(&entry, file.id, &folder_ids, empty_version()?)?;
             if !rfsync_storage::update_file(tx, updated)? {
                 return Err(EngineError::FileNotFound(target.to_path_buf()));
             }
         }
         None => {
-            let new_file = to_storage_file(&entry, 0, &folder_ids)?;
+            let new_file = to_storage_file(&entry, 0, &folder_ids, empty_version()?)?;
             rfsync_storage::insert_file(tx, &new_file)?;
         }
     }
@@ -132,12 +133,17 @@ pub fn apply_diff(
     }
 
     for added_entry in diff.added_files {
-        let file = to_storage_file(added_entry, 0, &folder_ids)?;
+        let file = to_storage_file(added_entry, 0, &folder_ids, empty_version()?)?;
         rfsync_storage::insert_file(tx, &file)?;
     }
 
     for (modified_file_id, modified_entry) in diff.modified_files {
-        let file = to_storage_file(modified_entry, modified_file_id, &folder_ids)?;
+        let file = to_storage_file(
+            modified_entry,
+            modified_file_id,
+            &folder_ids,
+            empty_version()?,
+        )?;
         if !rfsync_storage::update_file(tx, file)? {
             return Err(EngineError::FileNotFound(modified_entry.path.clone()));
         }

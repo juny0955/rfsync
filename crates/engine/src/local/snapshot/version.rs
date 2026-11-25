@@ -1,5 +1,35 @@
 use rfsync_protocol::{DeviceId, VersionVector};
-use rfsync_storage::SyncPending;
+use rfsync_storage::{File, SyncPending};
+
+use crate::error::EngineError;
+
+/// 아직 아무도 고치지 않은 파일의 version 바이트. 직렬화한 빈 벡터다(빈 바이트는 읽을 수 없다).
+pub(super) fn empty_version() -> Result<Vec<u8>, EngineError> {
+    Ok(VersionVector::default().to_bytes()?)
+}
+
+/// 내가 직접 본 변경을 DB에 반영할 때 저장할 version 바이트를 정한다.
+///
+/// - 이전 행이 없으면 새 파일이므로 `{나: 1}`이다.
+/// - 삭제 표시가 아니고 해시가 같으면 내용이 안 바뀐 것(수정 시각만 달라진 경우)이라 version을 그대로 둔다.
+/// - 해시가 달라졌거나, 삭제 표시된 파일이 돌아왔으면 이전 version에서 내 카운터를 올린다.
+#[allow(dead_code)] // 4-3b-2에서 감시자 반영 경로에 연결한다.
+pub(super) fn next_file_version(
+    previous: Option<&File>,
+    observed_hash: &str,
+    me: DeviceId,
+) -> Result<Vec<u8>, EngineError> {
+    let Some(file) = previous else {
+        let first = next_version(&VersionVector::default(), observed_hash, false, None, me);
+        return Ok(first.to_bytes()?);
+    };
+    if !file.deleted && file.hash == observed_hash {
+        return Ok(file.version.clone());
+    }
+
+    let before = VersionVector::from_bytes(&file.version)?;
+    Ok(next_version(&before, observed_hash, false, None, me).to_bytes()?)
+}
 
 /// 감시자가 파일의 변경을 DB에 반영할 때 저장할 버전을 정한다.
 ///
@@ -53,6 +83,20 @@ mod tests {
             }
         }
         vector
+    }
+
+    fn stored(hash_char: &str, deleted: bool, version: &VersionVector) -> File {
+        File {
+            id: 1,
+            folder_id: 1,
+            name: "a.txt".into(),
+            size: 1,
+            hash: hash_char.repeat(64),
+            modified_secs: 0,
+            modified_nanos: 0,
+            deleted,
+            version: version.to_bytes().unwrap(),
+        }
     }
 
     fn pending(hash_char: &str, deleted: bool, version: &VersionVector) -> SyncPending {
@@ -176,5 +220,67 @@ mod tests {
         );
 
         assert_eq!(next, vector(&[("me", 1), ("peer", 1)]));
+    }
+
+    #[test]
+    fn 이전_행이_없는_새_파일은_내_카운터가_1이다() {
+        let bytes = next_file_version(None, &"a".repeat(64), device("me")).unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            vector(&[("me", 1)])
+        );
+    }
+
+    #[test]
+    fn 해시가_같으면_version_바이트를_그대로_둔다() {
+        let version = vector(&[("peer", 2), ("me", 1)]);
+        let file = stored("a", false, &version);
+
+        let bytes = next_file_version(Some(&file), &"a".repeat(64), device("me")).unwrap();
+
+        assert_eq!(bytes, file.version);
+    }
+
+    #[test]
+    fn 해시가_달라지면_이전_version에서_내_카운터를_올린다() {
+        let file = stored("a", false, &vector(&[("peer", 2), ("me", 1)]));
+
+        let bytes = next_file_version(Some(&file), &"b".repeat(64), device("me")).unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            vector(&[("peer", 2), ("me", 2)])
+        );
+    }
+
+    #[test]
+    fn 삭제_표시된_파일이_같은_내용으로_돌아오면_올린다() {
+        let file = stored("a", true, &vector(&[("me", 2)]));
+
+        let bytes = next_file_version(Some(&file), &"a".repeat(64), device("me")).unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            vector(&[("me", 3)])
+        );
+    }
+
+    #[test]
+    fn 이전_version을_읽을_수_없으면_에러다() {
+        let mut file = stored("a", false, &VersionVector::default());
+        file.version = Vec::new();
+
+        assert!(next_file_version(Some(&file), &"b".repeat(64), device("me")).is_err());
+    }
+
+    #[test]
+    fn 빈_version_바이트는_읽을_수_있는_빈_벡터다() {
+        let bytes = empty_version().unwrap();
+
+        assert_eq!(
+            VersionVector::from_bytes(&bytes).unwrap(),
+            VersionVector::default()
+        );
     }
 }

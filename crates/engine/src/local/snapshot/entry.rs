@@ -4,7 +4,6 @@ use std::{
 };
 
 use rfsync_fs::{FsEntry, FsEntryKind};
-use rfsync_protocol::VersionVector;
 
 use crate::error::EngineError;
 
@@ -40,6 +39,7 @@ pub(super) fn to_storage_file(
     entry: &FsEntry,
     id: i64,
     folder_ids: &HashMap<PathBuf, i64>,
+    version: Vec<u8>,
 ) -> Result<rfsync_storage::File, EngineError> {
     let FsEntryKind::File {
         size,
@@ -72,7 +72,6 @@ pub(super) fn to_storage_file(
         modified_secs: i64::try_from(modified.as_secs())?,
         modified_nanos: modified.subsec_nanos(),
         deleted: false,
-        // 감시자가 내 카운터를 올리기 전까지는 빈 벡터다. 빈 바이트가 아니라 직렬화한 빈 벡터를 넣는다.
-        version: VersionVector::default().to_bytes()?,
+        version,
     })
 }
