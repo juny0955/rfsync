@@ -1,6 +1,8 @@
 use std::{
+    collections::HashSet,
     net::{Ipv4Addr, SocketAddr},
     path::Path,
+    pin::pin,
     sync::Arc,
 };
 
@@ -13,7 +15,7 @@ use tokio::{
     io::AsyncReadExt,
     sync::{
         mpsc::{self, Receiver, Sender},
-        oneshot,
+        oneshot, watch,
     },
     task::JoinSet,
     time::sleep,
@@ -37,34 +39,99 @@ enum SessionRole {
     Acceptor,
 }
 
+/// 페어링된 상대들과 연결을 맺고 지킨다. 페어링된 상대가 없어도 시작하며, `devices_changed`로 알려 주면
+/// 저장된 장치 목록을 다시 읽어 새 상대를 받아들이고 연결을 건다.
+///
+/// `index`는 연결이 새로 맺어질 때마다 그 시점의 값을 상대에게 보낸다.
 pub async fn run(
     identity: &Identity,
     port: u16,
     db_path: &Path,
-    index: Vec<Entry>,
+    index: watch::Receiver<Arc<Vec<Entry>>>,
     events: Sender<PeerEvent>,
+    mut devices_changed: Receiver<()>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), EngineError> {
-    let devices = {
-        let conn = rfsync_storage::open(db_path)?;
-        rfsync_storage::list_devices(&conn)?
-    };
+    let devices = list_devices(db_path)?;
+    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+    let endpoint = rfsync_network::bind_quic(addr, server_config_for(identity, &devices)?)?;
 
-    if devices.is_empty() {
-        return Err(EngineError::NoPairedDevices);
+    let mut dialed = HashSet::new();
+    let mut dials = JoinSet::new();
+    start_dials(
+        &endpoint,
+        identity,
+        &devices,
+        &mut dialed,
+        &mut dials,
+        &index,
+        &events,
+    )?;
+    let accept = tokio::spawn(accept_loop(endpoint.clone(), index.clone(), events.clone()));
+
+    let mut shutdown = pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            // 알려 주는 쪽이 없어지면 이 분기만 꺼지고 나머지는 계속 돈다.
+            Some(()) = devices_changed.recv() => {
+                let result = list_devices(db_path).and_then(|devices| {
+                    // 이미 맺은 연결은 그대로 두고, 앞으로 오는 접속부터 새 목록으로 검증한다.
+                    endpoint.set_server_config(Some(server_config_for(identity, &devices)?));
+                    start_dials(&endpoint, identity, &devices, &mut dialed, &mut dials, &index, &events)
+                });
+                match result {
+                    Ok(()) => info!("페어링된 장치 목록을 다시 읽었습니다"),
+                    Err(e) => warn!("페어링된 장치 목록을 반영하지 못했습니다: {e}"),
+                }
+            }
+        }
     }
 
-    // 임시: 시작 시점의 목록을 모든 연결에 보낸다. 라이브 변경 반영은 증분 전송 단계에서 처리한다.
-    let index = Arc::new(index);
+    accept.abort();
+    endpoint.close(0u32.into(), b"shutdown");
+    dials.shutdown().await;
+    endpoint.wait_idle().await;
 
-    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let certs: Vec<&[u8]> = devices.iter().map(|d| d.cert_der.as_slice()).collect();
-    let config = rfsync_network::server_config(&identity.cert, &identity.key, &certs)?;
+    Ok(())
+}
 
-    let endpoint = rfsync_network::bind_quic(addr, config)?;
+fn list_devices(db_path: &Path) -> Result<Vec<rfsync_storage::Device>, EngineError> {
+    let conn = rfsync_storage::open(db_path)?;
+    Ok(rfsync_storage::list_devices(&conn)?)
+}
 
-    let mut dials = JoinSet::new();
-    for device in &devices {
+/// 페어링된 장치의 인증서를 믿는 서버 설정. 장치가 없으면 내 인증서만 믿는다.
+/// 내 인증서는 내 키로만 증명할 수 있으므로 아무도 접속하지 못하고, 빈 목록으로는 설정을 만들 수 없어서 쓴다.
+fn server_config_for(
+    identity: &Identity,
+    devices: &[rfsync_storage::Device],
+) -> Result<rfsync_network::ServerConfig, EngineError> {
+    let mut certs: Vec<&[u8]> = devices.iter().map(|d| d.cert_der.as_slice()).collect();
+    if certs.is_empty() {
+        certs.push(&identity.cert);
+    }
+    Ok(rfsync_network::server_config(
+        &identity.cert,
+        &identity.key,
+        &certs,
+    )?)
+}
+
+/// 주소를 아는 장치 가운데 아직 연결을 걸지 않은 장치마다 연결 작업을 띄운다.
+fn start_dials(
+    endpoint: &Endpoint,
+    identity: &Identity,
+    devices: &[rfsync_storage::Device],
+    dialed: &mut HashSet<Vec<u8>>,
+    dials: &mut JoinSet<()>,
+    index: &watch::Receiver<Arc<Vec<Entry>>>,
+    events: &Sender<PeerEvent>,
+) -> Result<(), EngineError> {
+    for device in devices {
+        if dialed.contains(&device.cert_der) {
+            continue;
+        }
         let Some(addr) = device.endpoint.as_deref() else {
             continue;
         };
@@ -83,16 +150,8 @@ pub async fn run(
             index.clone(),
             events.clone(),
         ));
+        dialed.insert(device.cert_der.clone());
     }
-
-    tokio::select! {
-        _ = shutdown => {}
-        _ = accept_loop(&endpoint, index, events.clone()) => {}
-    }
-    endpoint.close(0u32.into(), b"shutdown");
-    dials.shutdown().await;
-    endpoint.wait_idle().await;
-
     Ok(())
 }
 
@@ -100,7 +159,7 @@ async fn dial_loop(
     endpoint: Endpoint,
     addr: SocketAddr,
     config: ClientConfig,
-    index: Arc<Vec<Entry>>,
+    index: watch::Receiver<Arc<Vec<Entry>>>,
     events: Sender<PeerEvent>,
 ) {
     let mut backoff = Backoff::new();
@@ -117,9 +176,13 @@ async fn dial_loop(
     }
 }
 
-async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>, events: Sender<PeerEvent>) {
+async fn accept_loop(
+    endpoint: Endpoint,
+    index: watch::Receiver<Arc<Vec<Entry>>>,
+    events: Sender<PeerEvent>,
+) {
     loop {
-        match rfsync_network::accept_quic(endpoint).await {
+        match rfsync_network::accept_quic(&endpoint).await {
             Ok(conn) => {
                 tokio::spawn(hold_connection(
                     conn,
@@ -137,9 +200,11 @@ async fn accept_loop(endpoint: &Endpoint, index: Arc<Vec<Entry>>, events: Sender
 async fn hold_connection(
     conn: QuicConnection,
     role: SessionRole,
-    index: Arc<Vec<Entry>>,
+    index: watch::Receiver<Arc<Vec<Entry>>>,
     events: Sender<PeerEvent>,
 ) {
+    // 연결을 맺는 시점의 목록을 보낸다. 이후 변경은 `IndexUpdate`로 따로 알린다.
+    let index = index.borrow().clone();
     debug!("연결 시작: {role:?}, 보낼 파일 목록 {}개", index.len());
 
     // 핸드셰이크 뒤에도 제어 스트림을 닫지 않고 연결이 끝날 때까지 쓴다. 작업은 JoinSet이 버려질 때 함께 끝난다.

@@ -13,4 +13,5 @@ pub use handle::PeerHandle;
 pub use identity::{Identity, load_or_create_identity};
 pub(crate) use index::load_index;
 pub use pairing::{connect, listen};
+pub(crate) use pairing::{pair_connect, pair_listen};
 pub(crate) use session::run;

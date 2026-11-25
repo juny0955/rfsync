@@ -55,6 +55,35 @@ pub async fn connect(
     Ok((endpoint, connection))
 }
 
+/// 데몬용. 이미 만든 코드로 상대의 접속을 기다려 키를 교환하고 상대를 저장한다.
+/// QUIC 연결은 맺지 않는다. 데몬의 엔드포인트가 저장된 장치를 보고 맡는다.
+pub(crate) async fn pair_listen(
+    port: u16,
+    cert: &[u8],
+    code: &str,
+    db_path: &Path,
+) -> Result<(), EngineError> {
+    let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+    let peer_cert = rfsync_network::listen_pairing(bind_addr, code, cert).await?;
+    save_device(db_path, &peer_cert, None)?;
+    info!("A: 상대 키 확인 성공");
+    Ok(())
+}
+
+/// 데몬용. 상대의 주소와 코드로 키를 교환하고, 상대의 주소와 함께 저장한다.
+/// 저장된 주소로 데몬이 연결을 건다.
+pub(crate) async fn pair_connect(
+    server_addr: SocketAddr,
+    cert: &[u8],
+    code: &str,
+    db_path: &Path,
+) -> Result<(), EngineError> {
+    let peer_cert = rfsync_network::connect_pairing(server_addr, code, cert).await?;
+    save_device(db_path, &peer_cert, Some(server_addr))?;
+    info!("B: 상대 키 확인 성공");
+    Ok(())
+}
+
 fn save_device(
     db_path: &Path,
     cert_der: &[u8],
