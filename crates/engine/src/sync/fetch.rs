@@ -8,18 +8,8 @@ use crate::{
     error::EngineError,
     local::{OnExisting, clear_pending, record_pending, save_received_file},
     peer::PeerHandle,
+    sync::compare::matches_entry,
 };
-
-/// 비교할 때 내 목록에 있던 파일의 해시를 항목에 붙인다. 덮어쓰기 직전에 내 파일이 그대로인지 확인하는 기준이다.
-pub(super) fn with_local_hashes(mine: &[Entry], entries: Vec<Entry>) -> Vec<(Entry, [u8; 32])> {
-    entries
-        .into_iter()
-        .filter_map(|entry| {
-            let local = mine.iter().find(|local| local.path == entry.path)?;
-            Some((entry.clone(), local.hash))
-        })
-        .collect()
-}
 
 /// 내게 없는 파일(`missing`)과 상대가 더 최신인 파일(`updated`)을 상대에게서 하나씩 받아 온다.
 /// `updated`는 비교할 때의 내 파일(짝의 해시)이 그대로일 때만 덮어쓴다. 한 파일이 실패해도 나머지는 계속 받는다.
@@ -120,38 +110,5 @@ pub(super) async fn clear_pending_logged(db_path: &Path, path: &str) {
         Ok(Ok(())) => {}
         Ok(Err(e)) => warn!("남은 수신 기록을 지우지 못했습니다: {logged}: {e}"),
         Err(e) => warn!("수신 기록 지우기 작업이 실패했습니다: {logged}: {e}"),
-    }
-}
-
-/// 응답 헤더의 크기와 해시가 상대가 보낸 목록의 항목과 같은가.
-fn matches_entry(entry: &Entry, size: u64, hash: &[u8; 32]) -> bool {
-    entry.size == size && entry.hash == *hash
-}
-
-#[cfg(test)]
-mod tests {
-    use rfsync_protocol::VersionVector;
-
-    use super::*;
-
-    fn entry(path: &str, hash: u8) -> Entry {
-        Entry {
-            path: path.to_owned(),
-            size: 1,
-            hash: [hash; 32],
-            modified_secs: 100,
-            modified_nanos: 0,
-            deleted: false,
-            version: VersionVector::default(),
-        }
-    }
-
-    #[test]
-    fn 응답_헤더가_목록의_크기와_해시와_같을_때만_일치한다() {
-        let listed = entry("a.txt", 1); // 크기 1, 해시 [1; 32]
-
-        assert!(matches_entry(&listed, 1, &[1; 32]));
-        assert!(!matches_entry(&listed, 2, &[1; 32]), "크기가 다르다");
-        assert!(!matches_entry(&listed, 1, &[2; 32]), "해시가 다르다");
     }
 }

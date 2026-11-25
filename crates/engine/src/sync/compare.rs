@@ -113,6 +113,11 @@ pub(super) fn changed_entries(before: &[Entry], after: &[Entry]) -> Vec<Entry> {
         .collect()
 }
 
+/// 응답 헤더의 크기와 해시가 상대가 보낸 목록의 항목과 같은가.
+pub(super) fn matches_entry(entry: &Entry, size: u64, hash: &[u8; 32]) -> bool {
+    entry.size == size && entry.hash == *hash
+}
+
 #[cfg(test)]
 mod tests {
     use rfsync_protocol::{DeviceId, VersionVector};
@@ -426,5 +431,14 @@ mod tests {
         let before = vec![deleted("gone.txt", 2)];
 
         assert!(changed_entries(&before, &before).is_empty());
+    }
+
+    #[test]
+    fn 응답_헤더가_목록의_크기와_해시와_같을_때만_일치한다() {
+        let listed = entry("a.txt", 1); // 크기 1, 해시 [1; 32]
+
+        assert!(matches_entry(&listed, 1, &[1; 32]));
+        assert!(!matches_entry(&listed, 2, &[1; 32]), "크기가 다르다");
+        assert!(!matches_entry(&listed, 1, &[2; 32]), "해시가 다르다");
     }
 }
