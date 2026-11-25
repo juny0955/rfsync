@@ -17,6 +17,13 @@ use crate::NetworkError;
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_IDLE_TIMEOUT_MS: u32 = 30_000;
 
+/// 연결된 상대가 TLS 핸드셰이크에서 낸 인증서(DER). 상대의 첫 인증서만 돌려주며, 알 수 없으면 `None`이다.
+pub fn peer_certificate(connection: &Connection) -> Option<Vec<u8>> {
+    let identity = connection.peer_identity()?;
+    let certs = identity.downcast::<Vec<CertificateDer<'static>>>().ok()?;
+    certs.first().map(|cert| cert.to_vec())
+}
+
 pub fn bind_quic(addr: SocketAddr, config: ServerConfig) -> Result<Endpoint, NetworkError> {
     Ok(Endpoint::server(config, addr)?)
 }
@@ -360,6 +367,9 @@ mod tests {
         })
         .await??;
 
+        // 연결 양쪽이 상대의 인증서를 알아볼 수 있다.
+        assert_eq!(super::peer_certificate(&a_to_b), Some(b_cert.clone()));
+        assert_eq!(super::peer_certificate(&b_to_a), Some(a_cert.clone()));
         assert_eq!(a_to_b.remote_address(), b_addr);
         assert_eq!(c_to_b.remote_address(), b_addr);
         tokio::try_join!(
