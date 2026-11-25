@@ -9,11 +9,13 @@ pub mod error;
 mod file;
 mod folder;
 mod root;
+mod sync_pending;
 
 pub use devices::{Device, list_devices, upsert_device};
 pub use file::*;
 pub use folder::*;
 pub use root::*;
+pub use sync_pending::*;
 
 pub use rusqlite::{Connection as DbConnection, Transaction};
 
