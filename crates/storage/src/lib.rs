@@ -47,9 +47,9 @@ fn initialize_schema(conn: &mut DbConnection) -> Result<(), StorageError> {
             }
 
             tx.execute_batch(include_str!("../sql/schema.sql"))?;
-            tx.execute_batch("PRAGMA user_version = 1;")?;
+            tx.execute_batch("PRAGMA user_version = 2;")?;
         }
-        1 => {}
+        2 => {}
         _ => {
             return Err(StorageError::UnsupportedSchemaVersion(version));
         }
@@ -76,7 +76,7 @@ mod tests {
             |row| row.get(0),
         )?;
 
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         assert!(foreign_keys);
         assert_eq!(table_count, 3);
         assert!(
@@ -134,14 +134,14 @@ mod tests {
     #[test]
     fn rejects_unsupported_schema_version() -> Result<(), Box<dyn Error>> {
         let mut conn = DbConnection::open_in_memory()?;
-        conn.execute_batch("PRAGMA user_version = 2;")?;
+        conn.execute_batch("PRAGMA user_version = 3;")?;
 
         assert!(matches!(
             initialize_schema(&mut conn),
-            Err(StorageError::UnsupportedSchemaVersion(2))
+            Err(StorageError::UnsupportedSchemaVersion(3))
         ));
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         Ok(())
     }
 }

@@ -130,6 +130,7 @@ fn rejects_file_with_missing_parent_folder() -> Result<(), Box<dyn Error>> {
         hash: "a".repeat(64),
         modified_secs: 0,
         modified_nanos: 0,
+        deleted: false,
     };
     let result = calc_diff(&[], &[], &[file]);
     assert!(
