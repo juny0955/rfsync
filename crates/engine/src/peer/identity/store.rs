@@ -77,7 +77,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn DER을_왕복하고_기존_신원을_보존한다() -> io::Result<()> {
+    fn der을_왕복하고_기존_신원을_보존한다() -> io::Result<()> {
         let root = tempfile::tempdir()?;
         let dir = root.path().join("iden");
         assert!(load_from(&dir)?.is_none());

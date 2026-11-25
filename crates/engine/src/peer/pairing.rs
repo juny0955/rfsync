@@ -246,7 +246,7 @@ mod tests {
                     Err(EngineError::Network(NetworkError::Io(error)))
                         if error.kind() == io::ErrorKind::ConnectionRefused =>
                     {
-                        // The listener prints its code just before binding TCP.
+                        // 리스너는 TCP를 바인드하기 직전에 코드를 출력하므로 아직 접속이 거절될 수 있다. 양보하고 다시 시도한다.
                         tokio::task::yield_now().await;
                     }
                     result => {

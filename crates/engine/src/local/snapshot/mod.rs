@@ -43,7 +43,6 @@ pub fn create_initial_snapshot(
 
     let mut folder_ids = HashMap::<PathBuf, i64>::new();
 
-    // === START TRANSACTION ===
     let tx = begin_write(conn)?;
     let root_folder_id = rfsync_storage::insert_folder(&tx, root_id, "")?;
     folder_ids.insert(PathBuf::new(), root_folder_id);
@@ -66,7 +65,6 @@ pub fn create_initial_snapshot(
     }
 
     tx.commit().map_err(StorageError::from)?;
-    // === END TRANSACTION ===
 
     Ok(())
 }
@@ -80,7 +78,6 @@ pub fn create_initial_snapshot(
 pub fn sync_root(conn: &mut DbConnection, root: &Root, me: DeviceId) -> Result<(), EngineError> {
     let entries = rfsync_fs::scan(Path::new(&root.local_path))?;
 
-    // === START TRANSACTION ===
     let tx = begin_write(conn)?;
     let folders = rfsync_storage::get_folders_by_root_id(&tx, root.id)?;
     let files = rfsync_storage::get_files_by_root_id(&tx, root.id)?;
@@ -88,7 +85,6 @@ pub fn sync_root(conn: &mut DbConnection, root: &Root, me: DeviceId) -> Result<(
     let diff = calc_diff(&entries, &folders, &files)?;
     apply_diff(&tx, root.id, &folders, &files, diff, me)?;
     tx.commit().map_err(StorageError::from)?;
-    // === END TRANSACTION ===
 
     Ok(())
 }
@@ -103,22 +99,17 @@ pub fn sync_path(
     let entry = rfsync_fs::scan_path(root_path, target)?;
 
     let target_path = portable_path(target)?;
-    // === START TRANSACTION ===
     let tx = begin_write(conn)?;
 
     match entry {
-        // 폴더
         Some(entry) if entry.is_dir() => {
             sync_directory(&tx, root.id, root_path, target, &target_path, entry, me)?
         }
-        // 파일
         Some(entry) => sync_file(&tx, root.id, target, &target_path, entry, me)?,
-        // 스캔 결과 없음 -> 제거
         None => remove_path(&tx, root.id, &target_path, me)?,
     }
 
     tx.commit().map_err(StorageError::from)?;
-    // === END TRANSACTION ===
 
     Ok(())
 }
