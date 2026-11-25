@@ -1,7 +1,7 @@
 use std::{error::Error, fs, process::Command, time::SystemTime};
 
 #[test]
-fn registers_root_and_reports_duplicate() -> Result<(), Box<dyn Error>> {
+fn add_fails_with_a_hint_when_the_daemon_is_not_running() -> Result<(), Box<dyn Error>> {
     let dir = std::env::temp_dir().join(format!(
         "rfsync-cli-{}-{}",
         std::process::id(),
@@ -11,22 +11,27 @@ fn registers_root_and_reports_duplicate() -> Result<(), Box<dyn Error>> {
     ));
     fs::create_dir(&dir)?;
     fs::create_dir(dir.join("root"))?;
-    fs::write(dir.join("root/file"), b"test")?;
 
-    let run = || {
-        Command::new(env!("CARGO_BIN_EXE_rfsync"))
-            .current_dir(&dir)
-            .args(["add", "root"])
-            .output()
-    };
-    let first = run()?;
-    let duplicate = run()?;
+    let output = Command::new(env!("CARGO_BIN_EXE_rfsync"))
+        .current_dir(&dir)
+        .args(["add", "root"])
+        .output()?;
 
-    assert!(first.status.success());
-    assert!(dir.join("example.db").exists());
-    assert!(!duplicate.status.success());
-    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("이미 등록된 root"));
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("데몬에 연결하지 못했습니다"));
     fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn add_fails_when_the_path_does_not_exist() -> Result<(), Box<dyn Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_rfsync"))
+        .current_dir(std::env::temp_dir())
+        .args(["add", "rfsync-no-such-folder"])
+        .output()?;
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("rfsync-no-such-folder"));
     Ok(())
 }
 

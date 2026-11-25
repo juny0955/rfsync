@@ -168,3 +168,35 @@ async fn 비동기로_쓴_프레임을_동기로_읽을_수_있다() {
 
     assert_eq!(read, Response::Ok);
 }
+
+#[cfg(unix)]
+#[test]
+fn 클라이언트는_요청을_보내고_응답_하나를_읽는다() {
+    let dir = std::env::temp_dir().join(format!("rfsync-ipc-client-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("test.sock");
+    let _ = std::fs::remove_file(&socket);
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request: Request = read_frame(&mut stream).unwrap();
+        write_frame(&mut stream, &Response::Error(format!("{request:?}"))).unwrap();
+    });
+
+    let response = crate::request(&socket, &Request::Ping).unwrap();
+
+    server.join().unwrap();
+    assert_eq!(response, Response::Error("Ping".into()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn 소켓이_없으면_클라이언트는_io_에러를_돌려준다() {
+    let missing = std::env::temp_dir().join("rfsync-ipc-no-such.sock");
+
+    assert!(matches!(
+        crate::request(&missing, &Request::Ping),
+        Err(crate::IpcError::Io(_))
+    ));
+}

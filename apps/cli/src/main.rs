@@ -1,7 +1,8 @@
 use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use rfsync_engine::{DEFAULT_PORT, db_path};
+use rfsync_engine::{DEFAULT_PORT, db_path, socket_path};
+use rfsync_ipc::{Request, Response};
 
 #[derive(Parser)]
 #[command(name = "rfsync", version, about = "파일 동기화 도구")]
@@ -46,11 +47,31 @@ async fn main() -> ExitCode {
 
     match cli.command {
         Command::Add { path } => {
-            if let Err(error) = rfsync_engine::register_root(&path, db_path) {
-                eprintln!("오류: {error}");
-                return ExitCode::FAILURE;
+            // 데몬과 현재 폴더가 다를 수 있으므로 절대 경로로 바꿔 보낸다.
+            let path = match path.canonicalize() {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("오류: {}: {error}", path.display());
+                    return ExitCode::FAILURE;
+                }
+            };
+            match rfsync_ipc::request(&socket_path(db_path), &Request::AddRoot { path }) {
+                Ok(Response::Ok) => println!("root 등록 및 초기 스냅샷 생성 완료"),
+                Ok(Response::Error(message)) => {
+                    eprintln!("오류: {message}");
+                    return ExitCode::FAILURE;
+                }
+                Ok(other) => {
+                    eprintln!("오류: 예상하지 못한 응답입니다: {other:?}");
+                    return ExitCode::FAILURE;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "오류: 데몬에 연결하지 못했습니다. 데몬이 실행 중인지 확인하세요: {error}"
+                    );
+                    return ExitCode::FAILURE;
+                }
             }
-            println!("root 등록 및 초기 스냅샷 생성 완료");
         }
         Command::PairListen { port } => {
             if let Err(error) =

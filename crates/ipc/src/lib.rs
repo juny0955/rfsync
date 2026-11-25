@@ -3,12 +3,16 @@
 
 #[cfg(feature = "async")]
 mod async_frame;
+#[cfg(unix)]
+mod client;
 mod error;
 mod frame;
 mod message;
 
 #[cfg(feature = "async")]
 pub use async_frame::{read_frame_async, write_frame_async};
+#[cfg(unix)]
+pub use client::request;
 pub use error::IpcError;
 pub use frame::{read_frame, write_frame};
 pub use message::{Request, Response};

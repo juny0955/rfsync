@@ -31,7 +31,7 @@ pub async fn run(
 ) -> Result<(), EngineError> {
     // CLI 요청을 받는 소켓. 이미 데몬이 떠 있으면 여기서 바로 실패한다. 함수가 끝나면 소켓 파일을 지운다.
     #[cfg(unix)]
-    let _ipc = crate::ipc::start(&crate::socket_path(db_path))?;
+    let _ipc = crate::ipc::start(&crate::socket_path(db_path), db_path)?;
     let index = load_index(db_path)?;
     let root = first_root_path(db_path)?;
     let (events, receiver) = mpsc::channel(32);

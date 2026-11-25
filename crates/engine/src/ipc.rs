@@ -32,12 +32,12 @@ pub(crate) struct IpcServer {
 /// `path`에 소켓을 열고 요청을 받기 시작한다. tokio 런타임 안에서 불러야 한다.
 ///
 /// 이미 같은 경로에 다른 데몬이 떠 있으면 실패한다. 비정상 종료로 남은 소켓 파일은 지우고 다시 연다.
-pub(crate) fn start(path: &Path) -> Result<IpcServer, EngineError> {
+pub(crate) fn start(path: &Path, db_path: &Path) -> Result<IpcServer, EngineError> {
     let listener = bind(path)?;
     info!("CLI 요청을 받습니다: {}", path.display());
     Ok(IpcServer {
         path: path.to_path_buf(),
-        task: tokio::spawn(serve(listener)),
+        task: tokio::spawn(serve(listener, db_path.to_path_buf())),
     })
 }
 
@@ -86,12 +86,13 @@ fn remove_stale_socket(path: &Path) -> Result<(), EngineError> {
     }
 }
 
-async fn serve(listener: UnixListener) {
+async fn serve(listener: UnixListener, db_path: PathBuf) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
+                let db_path = db_path.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle(stream).await {
+                    if let Err(e) = handle(stream, &db_path).await {
                         debug!("CLI 요청을 처리하지 못했습니다: {e}");
                     }
                 });
@@ -104,11 +105,25 @@ async fn serve(listener: UnixListener) {
     }
 }
 
+/// 폴더를 루트로 등록한다. 초기 스냅샷이 디스크를 훑으므로 블로킹 스레드에서 돈다.
+async fn add_root(path: PathBuf, db_path: &Path) -> Response {
+    if !path.is_absolute() {
+        return Response::Error("경로는 절대 경로여야 합니다".into());
+    }
+    let db_path = db_path.to_path_buf();
+    match tokio::task::spawn_blocking(move || crate::register_root(&path, &db_path)).await {
+        Ok(Ok(_)) => Response::Ok,
+        Ok(Err(e)) => Response::Error(e.to_string()),
+        Err(e) => Response::Error(format!("등록 작업이 중단되었습니다: {e}")),
+    }
+}
+
 /// 연결 하나에서 요청 하나를 읽고 응답한다.
-async fn handle(mut stream: UnixStream) -> Result<(), IpcError> {
+async fn handle(mut stream: UnixStream, db_path: &Path) -> Result<(), IpcError> {
     let request: Request = read_frame_async(&mut stream).await?;
     let response = match request {
         Request::Ping => Response::Ok,
+        Request::AddRoot { path } => add_root(path, db_path).await,
         _ => Response::Error("아직 지원하지 않는 요청입니다".into()),
     };
     write_frame_async(&mut stream, &response).await
@@ -122,6 +137,68 @@ mod tests {
         dir.path().join("rfsync.sock")
     }
 
+    #[tokio::test]
+    async fn add_root는_폴더를_루트로_등록한다() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.txt"), "hello").unwrap();
+        let path = socket_in(&dir);
+        let db = dir.path().join("test.db");
+        let _server = start(&path, &db).unwrap();
+
+        let response = ask(
+            &path,
+            &Request::AddRoot {
+                path: root.path().to_path_buf(),
+            },
+        )
+        .await;
+
+        assert_eq!(response, Response::Ok);
+        let conn = rfsync_storage::open(&db).unwrap();
+        let roots = rfsync_storage::list_roots(&conn).unwrap();
+        assert_eq!(roots.len(), 1);
+        assert!(roots[0].has_snapshot);
+    }
+
+    #[tokio::test]
+    async fn add_root는_상대_경로를_거부한다() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = socket_in(&dir);
+        let db = dir.path().join("test.db");
+        let _server = start(&path, &db).unwrap();
+
+        let response = ask(
+            &path,
+            &Request::AddRoot {
+                path: "relative".into(),
+            },
+        )
+        .await;
+
+        assert!(matches!(response, Response::Error(_)));
+        let conn = rfsync_storage::open(&db).unwrap();
+        assert!(rfsync_storage::list_roots(&conn).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_root는_없는_폴더면_error로_답하고_서버는_계속_답한다() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = socket_in(&dir);
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
+
+        let response = ask(
+            &path,
+            &Request::AddRoot {
+                path: dir.path().join("missing"),
+            },
+        )
+        .await;
+
+        assert!(matches!(response, Response::Error(_)));
+        assert_eq!(ask(&path, &Request::Ping).await, Response::Ok);
+    }
+
     /// 요청 하나를 보내고 응답 하나를 읽는다.
     async fn ask(path: &Path, request: &Request) -> Response {
         let mut stream = UnixStream::connect(path).await.unwrap();
@@ -133,7 +210,7 @@ mod tests {
     async fn ping에는_ok로_답한다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let _server = start(&path).unwrap();
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
 
         assert_eq!(ask(&path, &Request::Ping).await, Response::Ok);
     }
@@ -142,7 +219,7 @@ mod tests {
     async fn 아직_지원하지_않는_요청에는_error로_답한다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let _server = start(&path).unwrap();
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
 
         let response = ask(&path, &Request::PairListen).await;
 
@@ -153,7 +230,7 @@ mod tests {
     async fn 소켓_파일은_같은_사용자만_접속하도록_0600이다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let _server = start(&path).unwrap();
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode();
 
@@ -164,7 +241,7 @@ mod tests {
     async fn 연결을_여러_개_동시에_받는다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let _server = start(&path).unwrap();
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
 
         let (a, b) = tokio::join!(ask(&path, &Request::Ping), ask(&path, &Request::Ping));
 
@@ -175,7 +252,7 @@ mod tests {
     async fn 읽을_수_없는_요청을_받아도_서버는_계속_답한다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let _server = start(&path).unwrap();
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
         let mut broken = UnixStream::connect(&path).await.unwrap();
         tokio::io::AsyncWriteExt::write_all(&mut broken, &[0, 0, 0, 1, 0xFF])
             .await
@@ -189,7 +266,7 @@ mod tests {
     async fn 버려지면_소켓_파일을_지운다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let server = start(&path).unwrap();
+        let server = start(&path, &dir.path().join("test.db")).unwrap();
         assert!(path.exists());
 
         drop(server);
@@ -205,7 +282,7 @@ mod tests {
         drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
         assert!(path.exists());
 
-        let _server = start(&path).unwrap();
+        let _server = start(&path, &dir.path().join("test.db")).unwrap();
 
         assert_eq!(ask(&path, &Request::Ping).await, Response::Ok);
     }
@@ -214,9 +291,9 @@ mod tests {
     async fn 이미_데몬이_떠_있으면_실패하고_기존_소켓은_그대로_둔다() {
         let dir = tempfile::tempdir().unwrap();
         let path = socket_in(&dir);
-        let _first = start(&path).unwrap();
+        let _first = start(&path, &dir.path().join("test.db")).unwrap();
 
-        let second = start(&path);
+        let second = start(&path, &dir.path().join("test.db"));
 
         assert!(matches!(second, Err(EngineError::DaemonAlreadyRunning(_))));
         assert_eq!(ask(&path, &Request::Ping).await, Response::Ok);
@@ -228,7 +305,7 @@ mod tests {
         let path = socket_in(&dir);
         fs::write(&path, b"keep").unwrap();
 
-        let result = start(&path);
+        let result = start(&path, &dir.path().join("test.db"));
 
         assert!(matches!(result, Err(EngineError::NotASocket(_))));
         assert_eq!(fs::read(&path).unwrap(), b"keep");
