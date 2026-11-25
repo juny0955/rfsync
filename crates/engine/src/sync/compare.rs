@@ -8,10 +8,9 @@ pub(super) struct IndexComparison {
     /// 받아 올 파일. 상대에게만 있거나, 내가 지운 뒤에 상대가 새로 만들거나 고친 파일이다.
     pub missing: Vec<Entry>,
     /// 양쪽에 있고 내용이 다르며 상대의 버전이 내 것을 앞선 파일. 상대가 더 최신이라 덮어써야 한다.
-    /// 덮어쓰기 받기는 아직 없어 지금은 알리기만 한다.
     pub updated: Vec<Entry>,
     /// 양쪽에 있고 내용이 다르며 버전이 서로 앞서지 않는(`Concurrent`) 파일. 동시에 고친 충돌이다.
-    /// 승자 결정과 패자 보존은 아직 없어 지금은 건드리지 않는다.
+    /// 누가 이기는지는 여기서 정하지 않는다(`conflict::decide_winner`).
     pub conflicts: Vec<Entry>,
     /// 상대가 지웠고 상대의 버전이 내 것을 앞서는, 내게 남아 있는 파일. 내가 지울 후보다.
     pub deleted: Vec<Entry>,

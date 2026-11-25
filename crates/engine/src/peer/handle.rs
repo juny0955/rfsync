@@ -1,5 +1,5 @@
-use rfsync_network::{QuicConnection, QuicRecvStream, open_stream};
-use rfsync_protocol::{Entry, Message, read_frame, write_frame};
+use rfsync_network::{QuicConnection, QuicRecvStream, open_stream, peer_certificate};
+use rfsync_protocol::{DeviceId, Entry, Message, read_frame, write_frame};
 use tokio::sync::mpsc::Sender;
 
 use crate::error::EngineError;
@@ -28,6 +28,12 @@ pub struct PeerHandle {
 impl PeerHandle {
     pub(super) fn new(conn: QuicConnection, updates: Sender<Vec<Entry>>) -> Self {
         Self { conn, updates }
+    }
+
+    /// 연결된 상대의 장치 ID. 상대의 인증서에서 계산하므로 상대가 나를 부르는 ID와 같다.
+    /// 인증서를 알 수 없으면 `None`이다.
+    pub fn device_id(&self) -> Option<DeviceId> {
+        peer_certificate(&self.conn).map(|cert| DeviceId::from_cert(&cert))
     }
 
     /// 연결된 뒤에 바뀐 항목을 상대에게 알린다. 연결이 이미 끝났다면 에러다.

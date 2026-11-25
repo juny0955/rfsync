@@ -264,32 +264,52 @@ async fn a_file_created_after_connecting_reaches_the_other_node() -> Result<(), 
     Ok(())
 }
 
+/// 같은 경로를 따로 등록해 내용이 다르면 동시에 고친 것이다. 수정시각이 최신인 쪽이 이기고,
+/// 진 쪽의 내용은 `.sync-conflict-*` 파일로 남아 양쪽에 모두 있어야 한다.
 #[tokio::test]
-async fn files_with_different_content_on_both_sides_are_left_untouched()
+async fn files_with_different_content_on_both_sides_keep_both_contents()
 -> Result<(), Box<dyn Error>> {
     let a = Node::new(&[("x.txt", b"A-version"), ("only-a.txt", b"hello")])?;
+    // b의 x.txt가 더 늦게 만들어져 수정시각이 최신이다.
+    sleep(Duration::from_millis(50)).await;
     let b = Node::new(&[("x.txt", b"B-version")])?;
     pair(&b, &a)?;
 
     with_nodes(&a, &b, || async {
-        // 같은 경로에 내용이 다른 파일은 어느 쪽이 최신인지 알 수 없어 건드리지 않는다.
-        // 파일 하나가 전달된 것으로 동기화가 실제로 일어났음을 확인한 뒤 잠시 더 지켜본다.
-        wait_until("b가 only-a.txt를 받는다", || {
-            b.files().contains_key("only-a.txt")
+        wait_until("양쪽에 충돌 파일이 생긴다", || {
+            [&a, &b].iter().all(|node| {
+                node.files()
+                    .keys()
+                    .any(|name| name.starts_with("x.sync-conflict-") && name.ends_with(".txt"))
+            })
         })
         .await;
-        sleep(Duration::from_millis(300)).await;
+        wait_until("양쪽의 x.txt가 이긴 쪽 내용이 된다", || {
+            [&a, &b]
+                .iter()
+                .all(|node| node.files().get("x.txt").map(Vec::as_slice) == Some(b"B-version"))
+        })
+        .await;
     })
     .await?;
 
+    // 이긴 쪽은 b의 내용이고, 진 쪽 a의 내용은 충돌 파일로 양쪽에 같은 이름으로 남는다.
+    let (a_files, b_files) = (a.files(), b.files());
+    assert_eq!(a_files, b_files, "양쪽의 최종 파일 목록이 같아야 한다");
     assert_eq!(
-        a.files(),
-        expected(&[("x.txt", b"A-version"), ("only-a.txt", b"hello")])
+        a_files.len(),
+        3,
+        "x.txt, only-a.txt, 충돌 파일 하나여야 한다"
     );
     assert_eq!(
-        b.files(),
-        expected(&[("x.txt", b"B-version"), ("only-a.txt", b"hello")])
+        a_files.get("only-a.txt").map(Vec::as_slice),
+        Some(b"hello".as_slice())
     );
+    let (_, preserved) = a_files
+        .iter()
+        .find(|(name, _)| name.starts_with("x.sync-conflict-"))
+        .expect("충돌 파일이 있어야 한다");
+    assert_eq!(preserved.as_slice(), b"A-version");
     Ok(())
 }
 
